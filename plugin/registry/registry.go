@@ -2,18 +2,18 @@
 package registry
 
 import (
-	. "github.com/mailgun/vulcand/middleware"
-	"github.com/mailgun/vulcand/middleware/limit/conn"
-	"github.com/mailgun/vulcand/middleware/limit/rate"
+	. "github.com/mailgun/vulcand/plugin"
+	"github.com/mailgun/vulcand/plugin/connlimit"
+	"github.com/mailgun/vulcand/plugin/ratelimit"
 )
 
 func GetRegistry(middlewareType string) *Registry {
 	r := NewRegistry()
 
-	if err := r.AddSpec(conn.GetSpec()); err != nil {
+	if err := r.AddSpec(connlimit.GetSpec()); err != nil {
 		panic(err)
 	}
-	if err := r.AddSpec(rate.GetSpec()); err != nil {
+	if err := r.AddSpec(ratelimit.GetSpec()); err != nil {
 		panic(err)
 	}
 	return r

@@ -3,18 +3,22 @@ package ratelimit
 import (
 	"encoding/json"
 	"fmt"
+	api "github.com/mailgun/gotools-api"
 	"github.com/mailgun/vulcan/limit"
+	"github.com/mailgun/vulcan/limit/tokenbucket"
 	"github.com/mailgun/vulcan/middleware"
-	vdmiddleware "github.com/mailgun/vulcand/middleware"
+	"github.com/mailgun/vulcand/plugin"
+	"net/http"
 	"time"
 )
 
 const Type = "ratelimit"
 
-func GetSpec() vdmiddleware.Spec {
-	return middleware.Spec{
-		Type:      Type,
-		FromBytes: ParseRateLimit,
+func GetSpec() plugin.MiddlewareSpec {
+	return plugin.MiddlewareSpec{
+		Type:        Type,
+		FromBytes:   FromBytes,
+		FromRequest: FromRequest,
 	}
 }
 
@@ -29,24 +33,32 @@ type RateLimit struct {
 	Requests      int    // Allowed average requests
 }
 
+// Type of the middleware
 func (r *RateLimit) GetType() string {
 	return Type
 }
 
+// Unique id of the rate limit instance
 func (r *RateLimit) GetId() string {
 	return r.Id
 }
 
 // Returns serialized representation of the middleware
-func (r *RateLimit) ToBytes() []byte {
+func (r *RateLimit) ToBytes() ([]byte, error) {
+	return json.Marshal(r)
 }
 
 // Returns vulcan library compatible middleware
-func (r *RateLimit) NewInstance() middleware.Middleware {
-
+func (r *RateLimit) NewInstance() (middleware.Middleware, error) {
+	mapper, err := limit.VariableToMapper(r.Variable)
+	if err != nil {
+		return nil, err
+	}
+	rate := tokenbucket.Rate{Units: int64(r.Requests), Period: time.Second * time.Duration(r.PeriodSeconds)}
+	return tokenbucket.NewTokenLimiterWithOptions(mapper, rate, tokenbucket.Options{Burst: r.Burst})
 }
 
-func NewRateLimit(requests int, variable string, burst int, periodSeconds int) (*RateLimit, error) {
+func NewRateLimit(id string, requests int, variable string, burst int, periodSeconds int) (*RateLimit, error) {
 	if _, err := limit.VariableToMapper(variable); err != nil {
 		return nil, err
 	}
@@ -60,6 +72,7 @@ func NewRateLimit(requests int, variable string, burst int, periodSeconds int) (
 		return nil, fmt.Errorf("Period seconds should be > 0, got %d", periodSeconds)
 	}
 	return &RateLimit{
+		Id:            id,
 		Requests:      requests,
 		Variable:      variable,
 		Burst:         burst,
@@ -72,11 +85,35 @@ func (rl *RateLimit) String() string {
 		rl.Id, rl.Variable, time.Duration(rl.PeriodSeconds)*time.Second, rl.Requests, rl.Burst)
 }
 
-func ParseRateLimit(in string) (middleware.Middleware, error) {
+func FromBytes(in []byte) (plugin.Middleware, error) {
 	var rate *RateLimit
-	err := json.Unmarshal([]byte(in), &rate)
+	err := json.Unmarshal(in, &rate)
 	if err != nil {
 		return nil, err
 	}
-	return NewRateLimit(rate.Requests, rate.Variable, rate.Burst, rate.PeriodSeconds)
+	return NewRateLimit(rate.Id, rate.Requests, rate.Variable, rate.Burst, rate.PeriodSeconds)
+}
+
+func FromRequest(id string, r *http.Request) (plugin.Middleware, error) {
+	requests, err := api.GetIntField(r, "requests")
+	if err != nil {
+		return nil, err
+	}
+
+	seconds, err := api.GetIntField(r, "seconds")
+	if err != nil {
+		return nil, err
+	}
+
+	burst, err := api.GetIntField(r, "burst")
+	if err != nil {
+		return nil, err
+	}
+
+	variable, err := api.GetStringField(r, "variable")
+	if err != nil {
+		return nil, err
+	}
+
+	return NewRateLimit(id, requests, variable, burst, seconds)
 }

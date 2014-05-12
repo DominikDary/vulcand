@@ -11,9 +11,11 @@ import (
 type MiddlewareSpec struct {
 	Type string
 	// Reader function that returns a middleware from a serialized format
-	FromBytes ReaderFn
-	// This is to provide CRUD for middlewares
-	ApiHandlers []*ApiHandler
+	FromBytes ByteReader
+
+	// Handler function that constructs a middleware from HTTP request
+	FromRequest RequestReader
+
 	// CLI command handlers for crud
 	CliHandler cli.Command
 }
@@ -24,22 +26,17 @@ type Middleware interface {
 	// Unique id of this middleware instance
 	GetId() string
 	// Returns serialized representation of the middleware
-	ToBytes() []byte
+	ToBytes() ([]byte, error)
 	// Returns vulcan library compatible middleware
-	NewInstance() middleware.Middleware
+	NewInstance() (middleware.Middleware, error)
 }
 
-// Reader constructs the serialized middleware from it's serialized representation
+// Reader constructs the middleware from it's serialized representation
 // It's up to middleware to choose the serialization format
-type ReaderFn func([]byte) (Middleware, error)
+type ByteReader func([]byte) (Middleware, error)
 
-// Api handler defines how middleware is represented by vulcand API interface
-// handler is plugged in into vulcand API handlers
-type ApiHandler struct {
-	Methods string // E.g. GET, PUT
-	Path    string // E.g. limits/rates/{id}
-	Handler http.HandlerFunc
-}
+// Handler constructs the middleware from http request
+type RequestReader func(r *http.Request, params map[string]string) (Middleware, error)
 
 // Registry contains currently registered middlewares and used to support pluggable middlewares
 // across all modules of the vulcand
@@ -49,11 +46,11 @@ type Registry struct {
 
 func NewRegistry() *Registry {
 	return &Registry{
-		specs: []*Spec{},
+		specs: []*MiddlewareSpec{},
 	}
 }
 
-func (r *Registry) AddSpec(s *Spec) error {
+func (r *Registry) AddSpec(s *MiddlewareSpec) error {
 	if s == nil {
 		return fmt.Errorf("Spec can not be nil")
 	}
@@ -64,7 +61,7 @@ func (r *Registry) AddSpec(s *Spec) error {
 	return nil
 }
 
-func (r *Registry) GetSpec(middlewareType string) *Spec {
+func (r *Registry) GetSpec(middlewareType string) *MiddlewareSpec {
 	for _, s := range r.specs {
 		if s.Type == middlewareType {
 			return s
@@ -73,6 +70,6 @@ func (r *Registry) GetSpec(middlewareType string) *Spec {
 	return nil
 }
 
-func (r *Registry) GetSpecs(middlewareType string) []*Spec {
+func (r *Registry) GetSpecs(middlewareType string) []*MiddlewareSpec {
 	return r.specs
 }
