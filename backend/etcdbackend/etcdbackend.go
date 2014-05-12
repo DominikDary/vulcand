@@ -4,7 +4,6 @@
 package etcdbackend
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/mailgun/go-etcd/etcd"
 	log "github.com/mailgun/gotools-log"
@@ -65,15 +64,7 @@ func (s *EtcdBackend) DeleteHost(name string) error {
 }
 
 func (s *EtcdBackend) AddLocation(id, hostname, path, upstreamId string) error {
-	if len(path) == 0 || len(hostname) == 0 || len(upstreamId) == 0 {
-		return fmt.Errorf("Supply valid hostname, path and upstream id")
-	}
-
-	log.Infof("Add Location(id=%s, hosntame=%s, path=%s, upstream=%s)", id, hostname, path, upstreamId)
-	// Make sure location path is a valid regular expression
-	if _, err := regexp.Compile(path); err != nil {
-		return fmt.Errorf("Path should be a valid Golang regular expression")
-	}
+	log.Infof("Add Location(id=%s, hosntame=%s, path=%s, upstream=%s)")
 
 	// Make sure upstream actually exists
 	_, err := s.readUpstream(upstreamId)
