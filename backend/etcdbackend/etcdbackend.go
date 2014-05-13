@@ -1,6 +1,5 @@
-// Etcd implementation of the backend, where all vulcand properties
-// are implemented as directories or keys. This backend watches the changes
-// and generates events with sequence of changes.
+// Etcd implementation of the backend, where all vulcand properties are implemented as directories or keys.
+// This backend watches the changes and generates events with sequence of changes.
 package etcdbackend
 
 import (
@@ -9,12 +8,14 @@ import (
 	log "github.com/mailgun/gotools-log"
 	"github.com/mailgun/vulcan/endpoint"
 	. "github.com/mailgun/vulcand/backend"
+	"github.com/mailgun/vulcand/plugin"
 	"regexp"
 	"strings"
 )
 
 type EtcdBackend struct {
 	nodes       []string
+	registry    *plugin.Registry
 	etcdKey     string
 	consistency string
 	client      *etcd.Client
@@ -22,13 +23,14 @@ type EtcdBackend struct {
 	stopC       chan bool
 }
 
-func NewEtcdBackend(nodes []string, etcdKey, consistency string) (*EtcdBackend, error) {
+func NewEtcdBackend(registry *plugin.Registry, nodes []string, etcdKey, consistency string) (*EtcdBackend, error) {
 	client := etcd.NewClient(nodes)
 	if err := client.SetConsistency(consistency); err != nil {
 		return nil, err
 	}
 	b := &EtcdBackend{
 		nodes:       nodes,
+		registry:    registry,
 		etcdKey:     etcdKey,
 		consistency: consistency,
 		client:      client,
@@ -47,82 +49,70 @@ func (s *EtcdBackend) GetHosts() ([]*Host, error) {
 	return s.readHosts(true)
 }
 
-func (s *EtcdBackend) AddHost(name string) error {
-	if len(name) == 0 {
-		return fmt.Errorf("Host name can not be empty")
+func (s *EtcdBackend) AddHost(h *Host) (*Host, error) {
+	if _, err := s.client.CreateDir(s.path("hosts", h.Name), 0); err != nil {
+		return nil, objectError(err, h)
 	}
-	_, err := s.client.CreateDir(s.path("hosts", name), 0)
-	if isDupe(err) {
-		return fmt.Errorf("Host '%s' already exists", name)
-	}
-	return err
+	return h, nil
 }
 
 func (s *EtcdBackend) DeleteHost(name string) error {
 	_, err := s.client.Delete(s.path("hosts", name), true)
-	return err
+	return objectError(err, &Host{Name: name})
 }
 
-func (s *EtcdBackend) AddLocation(id, hostname, path, upstreamId string) error {
-	log.Infof("Add Location(id=%s, hosntame=%s, path=%s, upstream=%s)")
+func (s *EtcdBackend) AddLocation(l *Location) (*Location, error) {
+	if _, err := s.readUpstream(l.Upstream.Id); err != nil {
+		return nil, err
+	}
 
-	// Make sure upstream actually exists
-	_, err := s.readUpstream(upstreamId)
-	if err != nil {
-		return err
-	}
-	// Create the location
-	if id == "" {
-		response, err := s.client.AddChildDir(s.path("hosts", hostname, "locations"), 0)
+	// Auto generate id if not set by user, very handy feature
+	if l.Id == "" {
+		response, err := s.client.AddChildDir(s.path("hosts", l.Hostname, "locations"), 0)
 		if err != nil {
-			return formatErr(err)
+			return nil, objectError(err, l)
 		}
-		id = suffix(response.Node.Key)
+		l.Id = suffix(response.Node.Key)
 	} else {
-		_, err := s.client.CreateDir(s.path("hosts", hostname, "locations", id), 0)
+		_, err := s.client.CreateDir(s.path("hosts", l.Hostname, "locations", l.Id), 0)
 		if err != nil {
-			return formatErr(err)
+			return nil, objectError(err, l)
 		}
 	}
-	locationKey := s.path("hosts", hostname, "locations", id)
-	if _, err := s.client.Create(join(locationKey, "path"), path, 0); err != nil {
-		return formatErr(err)
+	locationKey := s.path("hosts", l.Hostname, "locations", l.Id)
+	if _, err := s.client.Create(join(locationKey, "path"), l.Path, 0); err != nil {
+		return nil, err
 	}
-	if _, err := s.client.Create(join(locationKey, "upstream"), upstreamId, 0); err != nil {
-		return formatErr(err)
+	if _, err := s.client.Create(join(locationKey, "upstream"), l.Upstream.Id, 0); err != nil {
+		return nil, err
 	}
-	return nil
+	return l, nil
 }
 
 func (s *EtcdBackend) UpdateLocationUpstream(hostname, id, upstreamId string) error {
 	log.Infof("Update Location(id=%s, hostname=%s) set upstream %s", id, hostname, upstreamId)
 
-	// Make sure upstream actually exists
-	_, err := s.readUpstream(upstreamId)
-	if err != nil {
+	// Make sure upstream exists
+	if _, err := s.readUpstream(upstreamId); err != nil {
 		return err
 	}
 
-	// Make sure location actually exists
 	location, err := s.readLocation(hostname, id)
 	if err != nil {
 		return err
 	}
 
-	// Update upstream
-	if _, err := s.client.Set(join(location.EtcdKey, "upstream"), upstreamId, 0); err != nil {
-		return formatErr(err)
-	}
-
-	return nil
+	_, err = s.client.Set(join(location.BackendKey, "upstream"), upstreamId, 0)
+	return err
 }
 
 func (s *EtcdBackend) DeleteLocation(hostname, id string) error {
 	locationKey := s.path("hosts", hostname, "locations", id)
-	if _, err := s.client.Delete(locationKey, true); err != nil {
+	_, err := s.client.Delete(locationKey, true)
+	if err != nil {
 		return formatErr(err)
 	}
-	return nil
+
 }
 
 func (s *EtcdBackend) GetUpstreams() ([]*Upstream, error) {
@@ -133,20 +123,20 @@ func (s *EtcdBackend) GetUpstream(id string) (*Upstream, error) {
 	return s.readUpstream(id)
 }
 
-func (s *EtcdBackend) AddUpstream(upstreamId string) error {
-	if upstreamId == "" {
-		if _, err := s.client.AddChildDir(s.path("upstreams"), 0); err != nil {
-			return formatErr(err)
+func (s *EtcdBackend) AddUpstream(u *Upstream) (*Upstream, error) {
+	if u.Id == "" {
+		response, err := s.client.AddChildDir(s.path("upstreams"), 0)
+		if err != nil {
+			return nil, formatErr(err)
 		}
+		u.Id = suffix(response.Node.Key)
 	} else {
-		if _, err := s.client.CreateDir(s.path("upstreams", upstreamId), 0); err != nil {
-			if isDupe(err) {
-				return fmt.Errorf("Upstream '%s' already exists", upstreamId)
-			}
-			return formatErr(err)
+		response, err := s.client.CreateDir(s.path("upstreams", u.Id), 0)
+		if err != nil {
+			return nil, formatErr(err)
 		}
 	}
-	return nil
+	return u, nil
 }
 
 func (s *EtcdBackend) DeleteUpstream(upstreamId string) error {
@@ -161,20 +151,19 @@ func (s *EtcdBackend) DeleteUpstream(upstreamId string) error {
 	return err
 }
 
-func (s *EtcdBackend) AddEndpoint(upstreamId, id, url string) error {
-	if _, err := endpoint.ParseUrl(url); err != nil {
-		return fmt.Errorf("Endpoint url '%s' is not valid")
-	}
-	if id == "" {
-		if _, err := s.client.AddChild(s.path("upstreams", upstreamId, "endpoints"), url, 0); err != nil {
-			return formatErr(err)
+func (s *EtcdBackend) AddEndpoint(e *Endpoint) (*Endpoint, error) {
+	if e.Id == "" {
+		response, err := s.client.AddChild(s.path("upstreams", e.UpstreamId, "endpoints"), e.Url, 0)
+		if err != nil {
+			return nil, formatErr(err)
 		}
+		e.Id = suffix(response.Node.Key)
 	} else {
-		if _, err := s.client.Create(s.path("upstreams", upstreamId, "endpoints", id), url, 0); err != nil {
-			return formatErr(err)
+		if _, err := s.client.Create(s.path("upstreams", e.UpstreamId, "endpoints", e.Id), e.Url, 0); err != nil {
+			return nil, formatErr(err)
 		}
 	}
-	return nil
+	return e, nil
 }
 
 func (s *EtcdBackend) DeleteEndpoint(upstreamId, id string) error {
@@ -182,7 +171,7 @@ func (s *EtcdBackend) DeleteEndpoint(upstreamId, id string) error {
 		if notFound(err) {
 			return fmt.Errorf("Upstream '%s' not found", upstreamId)
 		}
-		return err
+		return formatErr(err)
 	}
 	if _, err := s.client.Delete(s.path("upstreams", upstreamId, "endpoints", id), true); err != nil {
 		if notFound(err) {
@@ -906,30 +895,42 @@ func join(keys ...string) string {
 	return strings.Join(keys, "/")
 }
 
-func formatErr(e error) error {
+func objectError(e error, o IdProvider) error {
+	if e == nil {
+		return nil
+	}
 	switch err := e.(type) {
 	case *etcd.EtcdError:
-		return fmt.Errorf("Key error: %s", err.Message)
+		if err.ErrorCode == 100 {
+			return &NotFound{Obj: o}
+		}
+		if err.ErrorCode == 105 {
+			return &AlreadyExists{Obj: o}
+		}
 	}
 	return e
 }
 
-func notFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	eErr, ok := err.(*etcd.EtcdError)
-	return ok && eErr.ErrorCode == 100
-}
-
-func isDupe(err error) bool {
-	if err == nil {
-		return false
-	}
-	eErr, ok := err.(*etcd.EtcdError)
-	return ok && eErr.ErrorCode == 105
-}
-
 func isDir(n *etcd.Node) bool {
 	return n != nil && n.Dir == true
+}
+
+type NotFoundError struct {
+	Obj IdProvider
+}
+
+func (n *NotFoundError) Error() string {
+	return fmt.Sprintf("%T '%s' not found", n.Obj, n.Obj.GetId())
+}
+
+type AlreadyExistsError struct {
+	Obj IdProvider
+}
+
+func (n *AlreadyExistsError) Error() string {
+	return fmt.Sprintf("%T '%s' already exists", n.Obj, n.Obj.GetId())
+}
+
+type IdProvider interface {
+	GetId() string
 }

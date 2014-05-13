@@ -11,13 +11,13 @@ import (
 type MiddlewareSpec struct {
 	Type string
 	// Reader function that returns a middleware from a serialized format
-	FromBytes ByteReader
-
+	FromJson JsonReader
 	// Handler function that constructs a middleware from HTTP request
 	FromRequest RequestReader
-
-	// CLI command handlers for crud
-	CliHandler cli.Command
+	// Flags for CLI tool to generate interface
+	CliFlags []cli.Flag
+	// Function that construtcs a middleware from CLI parameters
+	FromCli CliReader
 }
 
 type Middleware interface {
@@ -25,18 +25,21 @@ type Middleware interface {
 	GetType() string
 	// Unique id of this middleware instance
 	GetId() string
-	// Returns serialized representation of the middleware
-	ToBytes() ([]byte, error)
+	// Returns JSON serialized representation of the middleware
+	ToJson() ([]byte, error)
 	// Returns vulcan library compatible middleware
 	NewInstance() (middleware.Middleware, error)
 }
 
-// Reader constructs the middleware from it's serialized representation
+// Reader constructs the middleware from it's serialized JSON representation
 // It's up to middleware to choose the serialization format
-type ByteReader func([]byte) (Middleware, error)
+type JsonReader func([]byte) (Middleware, error)
 
 // Handler constructs the middleware from http request
 type RequestReader func(r *http.Request, params map[string]string) (Middleware, error)
+
+// Reader constructs the middleware from the CLI interface
+type CliReader func(c *cli.Context) (Middleware, error)
 
 // Registry contains currently registered middlewares and used to support pluggable middlewares
 // across all modules of the vulcand

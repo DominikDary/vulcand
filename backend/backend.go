@@ -2,15 +2,15 @@
 package backend
 
 import (
+	"encoding/json"
 	"fmt"
-
 	"github.com/mailgun/vulcan/netutils"
+	. "github.com/mailgun/vulcand/plugin"
 	"regexp"
 )
 
 type Backend interface {
 	GetHosts() ([]*Host, error)
-
 	AddHost(*Host) (*Host, error)
 	GetHost(name string) *Host
 	DeleteHost(name string) error
@@ -20,14 +20,10 @@ type Backend interface {
 	DeleteLocation(hostname, id string) error
 	UpdateLocationUpstream(hostname, id string, upstream string) error
 
-	AddLocationMiddleware(hostname, locationId string, rateLimit *RateLimit) (*RateLimit, error)
-	//GetLocationMiddleware(hostname, locationId string,
-	DeleteLocationMiddleware(hostname, locationId, id string) error
-	UpdateLocationMiddleware(hostname, locationId string, id string, rateLimit *RateLimit) error
-
-	AddLocationConnLimit(hostname, locationId, connLimit *ConnLimit) (*ConnLimit, error)
-	DeleteLocationConnLimit(hostname, locationId, id string) error
-	UpdateLocationConnLimit(hostname, locationId string, connLimit *ConnLimit) (*ConnLimit, error)
+	AddLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error)
+	GetLocationMiddleware(hostname, locationId string, mType string) (Middleware, error)
+	DeleteLocationMiddleware(hostname, locationId, mType, id string) error
+	UpdateLocationMiddleware(hostname, locationId string, m Middleware) error
 
 	GetUpstreams() ([]*Upstream, error)
 	AddUpstream(*Upstream) (*Upstream, error)
@@ -60,6 +56,15 @@ type Host struct {
 	Locations  []*Location
 }
 
+func HostFromJson(in []byte) (*Host, error) {
+	var h *Host
+	err := json.Unmarshal(in, &h)
+	if err != nil {
+		return nil, err
+	}
+	return NewHost(h.Name)
+}
+
 func NewHost(name string) (*Host, error) {
 	if name == "" {
 		return nil, fmt.Errorf("Hostname can not be empty")
@@ -74,6 +79,10 @@ func (h *Host) String() string {
 	return fmt.Sprintf("Host(name=%s, backendKey=%s, locations=%s)", h.Name, h.BackendKey, h.Locations)
 }
 
+func (h *Host) GetId() string {
+	return h.Name
+}
+
 // Hosts contain one or several locations. Each location defines a path - simply a regular expression that will be matched against request's url.
 // Location contains link to an upstream and vulcand will use the endpoints from this upstream to serve the request.
 // E.g. location loc1 will serve the request curl http://example.com/alice because it matches the path /alice:
@@ -84,6 +93,15 @@ type Location struct {
 	Id          string
 	Upstream    *Upstream
 	Middlewares []interface{}
+}
+
+func LocationFromJson(in []byte) (*Location, error) {
+	var l *Location
+	err := json.Unmarshal(in, &l)
+	if err != nil {
+		return nil, err
+	}
+	return NewLocation(l.Hostname, l.Id, l.Path, l.Upstream.Id)
 }
 
 func NewLocation(hostname, id, path, upstreamId string) (*Location, error) {
@@ -107,8 +125,12 @@ func NewLocation(hostname, id, path, upstreamId string) (*Location, error) {
 
 func (l *Location) String() string {
 	return fmt.Sprintf(
-		"Location(hostname=%s, id=%s, path=%s, upstream=%s, connlimits=%s, ratelimits=%s)",
-		l.Id, l.Path, l.Upstream, l.ConnLimits, l.RateLimits)
+		"Location(hostname=%s, id=%s, path=%s, upstream=%s, middlewares=%s)",
+		l.Id, l.Path, l.Upstream, l.Middlewares)
+}
+
+func (l *Location) GetId() string {
+	return l.Id
 }
 
 // Upstream is a collection of endpoints. Each location is assigned an upstream. Changing assigned upstream
@@ -128,6 +150,19 @@ func NewUpstream(id string) (*Upstream, error) {
 
 func (u *Upstream) String() string {
 	return fmt.Sprintf("Upstream(id=%s, key=%s, endpoints=%s)", u.Id, u.BackendKey, u.Endpoints)
+}
+
+func (u *Upstream) GetId() string {
+	return u.Id
+}
+
+func UpstreamFromJson(in []byte) (*Upstream, error) {
+	var u *Upstream
+	err := json.Unmarshal(in, &u)
+	if err != nil {
+		return nil, err
+	}
+	return NewUpstream(u.Id)
 }
 
 // Endpoint is a final destination of the request
@@ -155,6 +190,19 @@ func NewEndpoint(upstreamId, id, url string) (*Endpoint, error) {
 
 func (e *Endpoint) String() string {
 	return fmt.Sprintf("Endpoint(id=%s, key=%s, url=%s, stats=%s)", e.Id, e.BackendKey, e.Url, e.Stats)
+}
+
+func (e *Endpoint) GetId() string {
+	return e.Id
+}
+
+func EndpointFromJson(in []byte) (*Endpoint, error) {
+	var e *Endpoint
+	err := json.Unmarshal(in, &e)
+	if err != nil {
+		return nil, err
+	}
+	return NewEndpoint(e.UpstreamId, e.Id, e.Url)
 }
 
 // Endpoint's realtime stats about endpoint

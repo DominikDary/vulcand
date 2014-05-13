@@ -1,5 +1,9 @@
 package backend
 
+import (
+	. "github.com/mailgun/vulcand/plugin"
+)
+
 type HostAdded struct {
 	Host *Host
 }
@@ -31,42 +35,23 @@ type LocationPathUpdated struct {
 	Path     string
 }
 
-type LocationRateLimitAdded struct {
-	Host      *Host
-	Location  *Location
-	RateLimit *RateLimit
+type LocationMiddlewareAdded struct {
+	Host       *Host
+	Location   *Location
+	Middleware Middleware
 }
 
-type LocationRateLimitDeleted struct {
+type LocationMiddlewareUpdated struct {
+	Host       *Host
+	Location   *Location
+	Middleware Middleware
+}
+
+type LocationMidlewareDeleted struct {
 	Host             *Host
 	Location         *Location
 	RateLimitId      string
 	RateLimitEtcdKey string
-}
-
-type LocationRateLimitUpdated struct {
-	Host      *Host
-	Location  *Location
-	RateLimit *RateLimit
-}
-
-type LocationConnLimitAdded struct {
-	Host      *Host
-	Location  *Location
-	ConnLimit *ConnLimit
-}
-
-type LocationConnLimitDeleted struct {
-	Host             *Host
-	Location         *Location
-	ConnLimitId      string
-	ConnLimitEtcdKey string
-}
-
-type LocationConnLimitUpdated struct {
-	Host      *Host
-	Location  *Location
-	ConnLimit *ConnLimit
 }
 
 type UpstreamAdded struct {

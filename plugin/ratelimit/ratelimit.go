@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/codegangsta/cli"
 	api "github.com/mailgun/gotools-api"
 	"github.com/mailgun/vulcan/limit"
 	"github.com/mailgun/vulcan/limit/tokenbucket"
@@ -14,10 +15,11 @@ import (
 
 const Type = "ratelimit"
 
+// Spec is an entry point of a plugin and will be called to register this middleware plugin withing vulcand
 func GetSpec() plugin.MiddlewareSpec {
 	return plugin.MiddlewareSpec{
 		Type:        Type,
-		FromBytes:   FromBytes,
+		FromJson:    FromJson,
 		FromRequest: FromRequest,
 	}
 }
@@ -44,7 +46,7 @@ func (r *RateLimit) GetId() string {
 }
 
 // Returns serialized representation of the middleware
-func (r *RateLimit) ToBytes() ([]byte, error) {
+func (r *RateLimit) ToJson() ([]byte, error) {
 	return json.Marshal(r)
 }
 
@@ -85,7 +87,7 @@ func (rl *RateLimit) String() string {
 		rl.Id, rl.Variable, time.Duration(rl.PeriodSeconds)*time.Second, rl.Requests, rl.Burst)
 }
 
-func FromBytes(in []byte) (plugin.Middleware, error) {
+func FromJson(in []byte) (plugin.Middleware, error) {
 	var rate *RateLimit
 	err := json.Unmarshal(in, &rate)
 	if err != nil {
@@ -116,4 +118,19 @@ func FromRequest(id string, r *http.Request) (plugin.Middleware, error) {
 	}
 
 	return NewRateLimit(id, requests, variable, burst, seconds)
+}
+
+// Constructs the middleware from the command line
+func FromCli(c *cli.Context) (plugin.Middleware, error) {
+	return NewRateLimit(c.String("id"), c.Int("requests"), c.String("var"), c.Int("burst"), c.Int("period"))
+}
+
+func CliFlags() []cli.Flag {
+	return []cli.Flag{
+		cli.StringFlag{"id", "", "rate id"},
+		cli.StringFlag{"var", "client.ip", "variable to rate against, e.g. client.ip, request.host or request.header.X-Header"},
+		cli.IntFlag{"requests", 1, "amount of requests"},
+		cli.IntFlag{"period", 1, "rate limit period in seconds"},
+		cli.IntFlag{"burst", 1, "allowed burst"},
+	}
 }
