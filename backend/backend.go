@@ -12,26 +12,26 @@ import (
 type Backend interface {
 	GetHosts() ([]*Host, error)
 	AddHost(*Host) (*Host, error)
-	GetHost(name string) *Host
+	GetHost(name string) (*Host, error)
 	DeleteHost(name string) error
 
 	AddLocation(*Location) (*Location, error)
-	GetLocation(hostname, id string) *Location
+	GetLocation(hostname, id string) (*Location, error)
 	DeleteLocation(hostname, id string) error
 	UpdateLocationUpstream(hostname, id string, upstream string) error
 
 	AddLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error)
-	GetLocationMiddleware(hostname, locationId string, mType string) (Middleware, error)
+	GetLocationMiddleware(hostname, locationId string, mType, id string) (Middleware, error)
 	DeleteLocationMiddleware(hostname, locationId, mType, id string) error
 	UpdateLocationMiddleware(hostname, locationId string, m Middleware) error
 
 	GetUpstreams() ([]*Upstream, error)
 	AddUpstream(*Upstream) (*Upstream, error)
-	GetUpstream(id string) *Upstream
+	GetUpstream(id string) (*Upstream, error)
 	DeleteUpstream(id string) error
 
 	AddEndpoint(*Endpoint) (*Endpoint, error)
-	GetEndpoint(upstreamId, id string) *Endpoint
+	GetEndpoint(upstreamId, id string) (*Endpoint, error)
 	DeleteEndpoint(upstreamId, id string) error
 
 	// Watch changes is an entry point for getting the configuration changes
@@ -92,7 +92,7 @@ type Location struct {
 	Path        string
 	Id          string
 	Upstream    *Upstream
-	Middlewares []interface{}
+	Middlewares []Middleware
 }
 
 func LocationFromJson(in []byte) (*Location, error) {
@@ -119,7 +119,7 @@ func NewLocation(hostname, id, path, upstreamId string) (*Location, error) {
 		Path:        path,
 		Id:          id,
 		Upstream:    &Upstream{Id: upstreamId, Endpoints: []*Endpoint{}},
-		Middlewares: []interface{}{},
+		Middlewares: []Middleware{},
 	}, nil
 }
 

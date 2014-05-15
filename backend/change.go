@@ -19,9 +19,9 @@ type LocationAdded struct {
 }
 
 type LocationDeleted struct {
-	Host            *Host
-	LocationId      string
-	LocationEtcdKey string
+	Host               *Host
+	LocationId         string
+	LocationBackendKey string
 }
 
 type LocationUpstreamUpdated struct {
@@ -36,22 +36,25 @@ type LocationPathUpdated struct {
 }
 
 type LocationMiddlewareAdded struct {
-	Host       *Host
-	Location   *Location
-	Middleware Middleware
+	Host                 *Host
+	Location             *Location
+	Middleware           Middleware
+	MiddlewareBackendKey string
 }
 
 type LocationMiddlewareUpdated struct {
-	Host       *Host
-	Location   *Location
-	Middleware Middleware
+	Host                 *Host
+	Location             *Location
+	Middleware           Middleware
+	MiddlewareBackendKey string
 }
 
-type LocationMidlewareDeleted struct {
-	Host             *Host
-	Location         *Location
-	RateLimitId      string
-	RateLimitEtcdKey string
+type LocationMiddlewareDeleted struct {
+	Host                 *Host
+	Location             *Location
+	MiddlewareId         string
+	MiddlewareType       string
+	MiddlewareBackendKey string
 }
 
 type UpstreamAdded struct {

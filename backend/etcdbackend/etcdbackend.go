@@ -9,6 +9,7 @@ import (
 	"github.com/mailgun/vulcan/endpoint"
 	. "github.com/mailgun/vulcand/backend"
 	"github.com/mailgun/vulcand/plugin"
+	. "github.com/mailgun/vulcand/plugin"
 	"regexp"
 	"strings"
 )
@@ -56,13 +57,43 @@ func (s *EtcdBackend) AddHost(h *Host) (*Host, error) {
 	return h, nil
 }
 
+func (s *EtcdBackend) GetHost(hostname string) (*Host, error) {
+	return s.readHost(hostname, false)
+}
+
+func (s *EtcdBackend) readHost(hostname string, deep bool) (*Host, error) {
+	hostKey := s.path("hosts", hostname)
+	_, err := s.client.Get(hostKey, false, false)
+	if err != nil {
+		return nil, objectError(err, &Host{Name: hostname})
+	}
+	host := &Host{
+		Name:       hostname,
+		BackendKey: hostKey,
+		Locations:  []*Location{},
+	}
+
+	if !deep {
+		return host, nil
+	}
+
+	for _, locationKey := range s.getDirs(hostKey, "locations") {
+		location, err := s.GetLocation(hostname, suffix(locationKey))
+		if err != nil {
+			return nil, err
+		}
+		host.Locations = append(host.Locations, location)
+	}
+	return host, nil
+}
+
 func (s *EtcdBackend) DeleteHost(name string) error {
 	_, err := s.client.Delete(s.path("hosts", name), true)
 	return objectError(err, &Host{Name: name})
 }
 
 func (s *EtcdBackend) AddLocation(l *Location) (*Location, error) {
-	if _, err := s.readUpstream(l.Upstream.Id); err != nil {
+	if _, err := s.GetUpstream(l.Upstream.Id); err != nil {
 		return nil, err
 	}
 
@@ -89,15 +120,56 @@ func (s *EtcdBackend) AddLocation(l *Location) (*Location, error) {
 	return l, nil
 }
 
+func (s *EtcdBackend) GetLocation(hostname, locationId string) (*Location, error) {
+	locationKey := s.path("hosts", hostname, "locations", locationId)
+	_, err := s.client.Get(locationKey, false, false)
+	if err != nil {
+		return nil, objectError(err, &Location{Id: locationId})
+	}
+	path, ok := s.getVal(locationKey, "path")
+	if !ok {
+		return nil, fmt.Errorf("Missing location path: %s", locationKey)
+	}
+	upstreamKey, ok := s.getVal(locationKey, "upstream")
+	if !ok {
+		return nil, fmt.Errorf("Missing location upstream: %s", locationKey)
+	}
+	location := &Location{
+		Hostname:    hostname,
+		Id:          locationId,
+		BackendKey:  locationKey,
+		Path:        path,
+		Middlewares: []Middleware{},
+	}
+	upstream, err := s.GetUpstream(upstreamKey)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, spec := range s.registry.GetSpecs() {
+		for _, cl := range s.getVals(locationKey, "middlewares", spec.Type) {
+			m, err := s.GetLocationMiddleware(hostname, locationId, spec.Type, cl.Key)
+			if err != nil {
+				log.Errorf("Failed to read middleware %s(%s), error: %s", spec.Type, cl.Key, err)
+			} else {
+				location.Middlewares = append(location.Middlewares, m)
+			}
+		}
+	}
+
+	location.Upstream = upstream
+	return location, nil
+}
+
 func (s *EtcdBackend) UpdateLocationUpstream(hostname, id, upstreamId string) error {
 	log.Infof("Update Location(id=%s, hostname=%s) set upstream %s", id, hostname, upstreamId)
 
 	// Make sure upstream exists
-	if _, err := s.readUpstream(upstreamId); err != nil {
+	if _, err := s.GetUpstream(upstreamId); err != nil {
 		return err
 	}
 
-	location, err := s.readLocation(hostname, id)
+	location, err := s.GetLocation(hostname, id)
 	if err != nil {
 		return err
 	}
@@ -110,33 +182,67 @@ func (s *EtcdBackend) DeleteLocation(hostname, id string) error {
 	locationKey := s.path("hosts", hostname, "locations", id)
 	_, err := s.client.Delete(locationKey, true)
 	if err != nil {
-		return formatErr(err)
+		return objectError(err, &Location{Id: id})
 	}
-
-}
-
-func (s *EtcdBackend) GetUpstreams() ([]*Upstream, error) {
-	return s.readUpstreams()
-}
-
-func (s *EtcdBackend) GetUpstream(id string) (*Upstream, error) {
-	return s.readUpstream(id)
+	return nil
 }
 
 func (s *EtcdBackend) AddUpstream(u *Upstream) (*Upstream, error) {
 	if u.Id == "" {
 		response, err := s.client.AddChildDir(s.path("upstreams"), 0)
 		if err != nil {
-			return nil, formatErr(err)
+			return nil, objectError(err, u)
 		}
 		u.Id = suffix(response.Node.Key)
 	} else {
-		response, err := s.client.CreateDir(s.path("upstreams", u.Id), 0)
+		_, err := s.client.CreateDir(s.path("upstreams", u.Id), 0)
 		if err != nil {
-			return nil, formatErr(err)
+			return nil, objectError(err, u)
 		}
 	}
 	return u, nil
+}
+
+func (s *EtcdBackend) GetUpstream(upstreamId string) (*Upstream, error) {
+	upstreamKey := s.path("upstreams", upstreamId)
+
+	_, err := s.client.Get(upstreamKey, false, false)
+	if err != nil {
+		return nil, objectError(err, &Upstream{Id: upstreamId})
+	}
+	upstream := &Upstream{
+		Id:         suffix(upstreamKey),
+		BackendKey: upstreamKey,
+		Endpoints:  []*Endpoint{},
+	}
+
+	endpointPairs := s.getVals(join(upstream.BackendKey, "endpoints"))
+	for _, e := range endpointPairs {
+		_, err := endpoint.ParseUrl(e.Val)
+		if err != nil {
+			fmt.Printf("Ignoring endpoint: failed to parse url: %s", e.Val)
+			continue
+		}
+		e := &Endpoint{
+			Url:        e.Val,
+			BackendKey: e.Key,
+			Id:         suffix(e.Key),
+		}
+		upstream.Endpoints = append(upstream.Endpoints, e)
+	}
+	return upstream, nil
+}
+
+func (s *EtcdBackend) GetUpstreams() ([]*Upstream, error) {
+	upstreams := []*Upstream{}
+	for _, upstreamKey := range s.getDirs(s.etcdKey, "upstreams") {
+		upstream, err := s.GetUpstream(suffix(upstreamKey))
+		if err != nil {
+			return nil, err
+		}
+		upstreams = append(upstreams, upstream)
+	}
+	return upstreams, nil
 }
 
 func (s *EtcdBackend) DeleteUpstream(upstreamId string) error {
@@ -148,130 +254,117 @@ func (s *EtcdBackend) DeleteUpstream(upstreamId string) error {
 		return fmt.Errorf("Can't delete upstream '%s', it's in use by %s", locations)
 	}
 	_, err = s.client.Delete(s.path("upstreams", upstreamId), true)
-	return err
+	return objectError(err, &Upstream{Id: upstreamId})
 }
 
 func (s *EtcdBackend) AddEndpoint(e *Endpoint) (*Endpoint, error) {
 	if e.Id == "" {
 		response, err := s.client.AddChild(s.path("upstreams", e.UpstreamId, "endpoints"), e.Url, 0)
 		if err != nil {
-			return nil, formatErr(err)
+			return nil, objectError(err, e)
 		}
 		e.Id = suffix(response.Node.Key)
 	} else {
 		if _, err := s.client.Create(s.path("upstreams", e.UpstreamId, "endpoints", e.Id), e.Url, 0); err != nil {
-			return nil, formatErr(err)
+			return nil, objectError(err, e)
 		}
 	}
 	return e, nil
 }
 
+func (s *EtcdBackend) GetEndpoint(upstreamId, id string) (*Endpoint, error) {
+	if _, err := s.GetUpstream(upstreamId); err != nil {
+		return nil, err
+	}
+
+	response, err := s.client.Get(s.path("upstreams", upstreamId, "endpoints", id), false, false)
+	if err != nil {
+		return nil, objectError(err, &Endpoint{Id: id})
+	}
+
+	return &Endpoint{
+		Url:        response.Node.Value,
+		BackendKey: response.Node.Key,
+		Id:         suffix(response.Node.Key),
+	}, nil
+}
+
 func (s *EtcdBackend) DeleteEndpoint(upstreamId, id string) error {
-	if _, err := s.readUpstream(upstreamId); err != nil {
-		if notFound(err) {
-			return fmt.Errorf("Upstream '%s' not found", upstreamId)
-		}
-		return formatErr(err)
+	if _, err := s.GetUpstream(upstreamId); err != nil {
+		return err
 	}
 	if _, err := s.client.Delete(s.path("upstreams", upstreamId, "endpoints", id), true); err != nil {
-		if notFound(err) {
-			return fmt.Errorf("Endpoint '%s' not found", id)
-		}
+		return objectError(err, &Endpoint{Id: id})
 	}
 	return nil
 }
 
-func (s *EtcdBackend) AddLocationRateLimit(hostname, locationId string, id string, rateLimit *RateLimit) error {
+func (s *EtcdBackend) AddLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error) {
 	// Make sure location actually exists
-	if _, err := s.readLocation(hostname, locationId); err != nil {
-		return err
+	if _, err := s.GetLocation(hostname, locationId); err != nil {
+		return nil, err
 	}
-	bytes, err := json.Marshal(rateLimit)
+	bytes, err := m.ToJson()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if id == "" {
-		if _, err := s.client.AddChild(s.path("hosts", hostname, "locations", locationId, "limits", "rates"), string(bytes), 0); err != nil {
-			return formatErr(err)
+	if m.GetId() == "" {
+		response, err := s.client.AddChild(s.path("hosts", hostname, "locations", locationId, "middlewares", m.GetType()), string(bytes), 0)
+		if err != nil {
+			return nil, err
 		}
+		m.SetId(suffix(response.Node.Key))
 	} else {
-		if _, err := s.client.Create(s.path("hosts", hostname, "locations", locationId, "limits", "rates", id), string(bytes), 0); err != nil {
-			return formatErr(err)
+		if _, err := s.client.Create(s.path("hosts", hostname, "locations", locationId, "middlewares", m.GetType(), m.GetId()), string(bytes), 0); err != nil {
+			return nil, objectError(err, m)
 		}
 	}
-	return nil
+	return m, nil
 }
 
-func (s *EtcdBackend) UpdateLocationRateLimit(hostname, locationId string, id string, rateLimit *RateLimit) error {
+func (s *EtcdBackend) GetLocationMiddleware(hostname, locationId, mType, id string) (Middleware, error) {
+	spec := s.registry.GetSpec(mType)
+	if spec == nil {
+		return nil, fmt.Errorf("Middleware type %s is not registered", mType)
+	}
+	// Make sure location exists
+	if _, err := s.GetLocation(hostname, locationId); err != nil {
+		return nil, err
+	}
+
+	bytes, ok := s.getVal(s.path("hosts", hostname, "locations", locationId, "middlewares", mType))
+	if !ok {
+		return nil, fmt.Errorf("Middleware %s(%s) not found", mType, id)
+	}
+	m, err := spec.FromJson([]byte(bytes))
+	if err != nil {
+		return nil, fmt.Errorf("Failed to read Middleware %s(%s)", mType, id, err)
+	}
+	return m, nil
+}
+
+func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, id string, m Middleware) error {
 	if len(id) == 0 || len(hostname) == 0 || len(locationId) == 0 {
 		return fmt.Errorf("Provide hostname, location and rate id to update")
 	}
 	// Make sure location actually exists
-	if _, err := s.readLocation(hostname, locationId); err != nil {
+	if _, err := s.GetLocation(hostname, locationId); err != nil {
 		return err
 	}
-	bytes, err := json.Marshal(rateLimit)
+	bytes, err := m.ToJson()
 	if err != nil {
 		return err
 	}
-	if _, err := s.client.Set(s.path("hosts", hostname, "locations", locationId, "limits", "rates", id), string(bytes), 0); err != nil {
-		return formatErr(err)
+	if _, err := s.client.Set(s.path("hosts", hostname, "locations", locationId, "limits", "rates", m.GetId()), string(bytes), 0); err != nil {
+		return objectError(err, m)
 	}
 	return nil
 }
 
-func (s *EtcdBackend) DeleteLocationRateLimit(hostname, locationId, id string) error {
-	if _, err := s.client.Delete(s.path("hosts", hostname, "locations", locationId, "limits", "rates", id), true); err != nil {
+func (s *EtcdBackend) DeleteLocationMiddleware(hostname, locationId, mType, id string) error {
+	if _, err := s.client.Delete(s.path("hosts", hostname, "locations", locationId, "middlewares", mType, id), true); err != nil {
 		if notFound(err) {
-			return fmt.Errorf("Rate limit '%s' not found", id)
-		}
-	}
-	return nil
-}
-
-func (s *EtcdBackend) AddLocationConnLimit(hostname, locationId, id string, connLimit *ConnLimit) error {
-	// Make sure location actually exists
-	if _, err := s.readLocation(hostname, locationId); err != nil {
-		return err
-	}
-	bytes, err := json.Marshal(connLimit)
-	if err != nil {
-		return err
-	}
-	if id == "" {
-		if _, err := s.client.AddChild(s.path("hosts", hostname, "locations", locationId, "limits", "connections"), string(bytes), 0); err != nil {
-			return formatErr(err)
-		}
-	} else {
-		if _, err := s.client.Create(s.path("hosts", hostname, "locations", locationId, "limits", "connections", id), string(bytes), 0); err != nil {
-			return formatErr(err)
-		}
-	}
-	return nil
-}
-
-func (s *EtcdBackend) UpdateLocationConnLimit(hostname, locationId string, id string, connLimit *ConnLimit) error {
-	if len(id) == 0 || len(hostname) == 0 || len(locationId) == 0 {
-		return fmt.Errorf("Provide hostname, location and rate id to update")
-	}
-	// Make sure location actually exists
-	if _, err := s.readLocation(hostname, locationId); err != nil {
-		return err
-	}
-	bytes, err := json.Marshal(connLimit)
-	if err != nil {
-		return err
-	}
-	if _, err := s.client.Set(s.path("hosts", hostname, "locations", locationId, "limits", "connections", id), string(bytes), 0); err != nil {
-		return formatErr(err)
-	}
-	return nil
-}
-
-func (s *EtcdBackend) DeleteLocationConnLimit(hostname, locationId, id string) error {
-	if _, err := s.client.Delete(s.path("hosts", hostname, "locations", locationId, "limits", "connections", id), true); err != nil {
-		if notFound(err) {
-			return fmt.Errorf("Connection limit '%s' not found", id)
+			return fmt.Errorf("Middleware %s('%s') not found", mType, id)
 		}
 	}
 	return nil
@@ -327,7 +420,7 @@ func (s EtcdBackend) path(keys ...string) string {
 // Reads the configuration of the vulcand and generates a sequence of events
 // just like as someone was creating locations and hosts in sequence.
 func (s *EtcdBackend) generateChanges(changes chan interface{}) error {
-	upstreams, err := s.readUpstreams()
+	upstreams, err := s.GetUpstreams()
 	if err != nil {
 		return err
 	}
@@ -374,8 +467,7 @@ func (s *EtcdBackend) parseChange(response *etcd.Response) (interface{}, error) 
 		s.parseUpstreamChange,
 		s.parseUpstreamEndpointChange,
 		s.parseUpstreamChange,
-		s.parseRateLimitChange,
-		s.parseConnLimitChange,
+		s.parseMiddlewareChange,
 	}
 	for _, matcher := range matchers {
 		a, err := matcher(response)
@@ -422,7 +514,7 @@ func (s *EtcdBackend) parseLocationChange(response *etcd.Response) (interface{},
 		return nil, err
 	}
 	if response.Action == "create" {
-		location, err := s.readLocation(hostname, locationId)
+		location, err := s.GetLocation(hostname, locationId)
 		if err != nil {
 			return nil, err
 		}
@@ -432,9 +524,9 @@ func (s *EtcdBackend) parseLocationChange(response *etcd.Response) (interface{},
 		}, nil
 	} else if response.Action == "delete" {
 		return &LocationDeleted{
-			Host:            host,
-			LocationId:      locationId,
-			LocationEtcdKey: strings.TrimSuffix(response.Node.Key, "/upstream"),
+			Host:               host,
+			LocationId:         locationId,
+			LocationBackendKey: strings.TrimSuffix(response.Node.Key, "/upstream"),
 		}, nil
 	}
 	return nil, fmt.Errorf("Unsupported action on the location: %s", response.Action)
@@ -455,7 +547,7 @@ func (s *EtcdBackend) parseLocationUpstreamChange(response *etcd.Response) (inte
 	if err != nil {
 		return nil, err
 	}
-	location, err := s.readLocation(hostname, locationId)
+	location, err := s.GetLocation(hostname, locationId)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +572,7 @@ func (s *EtcdBackend) parseLocationPathChange(response *etcd.Response) (interfac
 	if err != nil {
 		return nil, err
 	}
-	location, err := s.readLocation(hostname, locationId)
+	location, err := s.GetLocation(hostname, locationId)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +591,7 @@ func (s *EtcdBackend) parseUpstreamChange(response *etcd.Response) (interface{},
 	}
 	upstreamId := out[1]
 	if response.Action == "create" {
-		upstream, err := s.readUpstream(upstreamId)
+		upstream, err := s.GetUpstream(upstreamId)
 		if err != nil {
 			return nil, err
 		}
@@ -521,7 +613,7 @@ func (s *EtcdBackend) parseUpstreamEndpointChange(response *etcd.Response) (inte
 		return nil, nil
 	}
 	upstreamId, endpointId := out[1], out[2]
-	upstream, err := s.readUpstream(upstreamId)
+	upstream, err := s.GetUpstream(upstreamId)
 	if err != nil {
 		return nil, err
 	}
@@ -564,95 +656,55 @@ func (s *EtcdBackend) parseUpstreamEndpointChange(response *etcd.Response) (inte
 	return nil, fmt.Errorf("Unsupported action on the endpoint: %s", response.Action)
 }
 
-func (s *EtcdBackend) parseRateLimitChange(response *etcd.Response) (interface{}, error) {
-	out := regexp.MustCompile("/hosts/([^/]+)/locations/([^/]+)/limits/rates").FindStringSubmatch(response.Node.Key)
-	if len(out) != 3 {
+func (s *EtcdBackend) parseMiddlewareChange(response *etcd.Response) (interface{}, error) {
+	out := regexp.MustCompile("/hosts/([^/]+)/locations/([^/]+)/middlewares/([^/]+)").FindStringSubmatch(response.Node.Key)
+	if len(out) != 4 {
 		return nil, nil
 	}
-	hostname, locationId := out[1], out[2]
-	rateLimitId := suffix(response.Node.Key)
+	hostname, locationId, mType := out[1], out[2], out[3]
+	mId := suffix(response.Node.Key)
 
-	host, err := s.readHost(hostname, false)
+	spec := s.registry.GetSpec(mType)
+	if spec == nil {
+		return nil, fmt.Errorf("Unregistered middleware type %s", mType)
+	}
+	host, err := s.GetHost(hostname)
 	if err != nil {
 		return nil, err
 	}
-	location, err := s.readLocation(hostname, locationId)
+	location, err := s.GetLocation(hostname, locationId)
 	if err != nil {
 		return nil, err
 	}
 	if response.Action == "create" {
-		rate, err := s.readLocationRateLimit(response.Node.Key)
+		m, err := s.GetLocationMiddleware(hostname, locationId, mType, mId)
 		if err != nil {
 			return nil, err
 		}
-		return &LocationRateLimitAdded{
-			Host:      host,
-			Location:  location,
-			RateLimit: rate,
+		return &LocationMiddlewareAdded{
+			Host:                 host,
+			Location:             location,
+			Middleware:           m,
+			MiddlewareBackendKey: response.Node.Key,
 		}, nil
 	} else if response.Action == "set" {
-		rate, err := s.readLocationRateLimit(response.Node.Key)
+		m, err := s.GetLocationMiddleware(hostname, locationId, mType, mId)
 		if err != nil {
 			return nil, err
 		}
-		return &LocationRateLimitUpdated{
-			Host:      host,
-			Location:  location,
-			RateLimit: rate,
+		return &LocationMiddlewareUpdated{
+			Host:                 host,
+			Location:             location,
+			Middleware:           m,
+			MiddlewareBackendKey: response.Node.Key,
 		}, nil
 	} else if response.Action == "delete" {
-		return &LocationRateLimitDeleted{
-			Host:             host,
-			Location:         location,
-			RateLimitId:      rateLimitId,
-			RateLimitEtcdKey: response.Node.Key,
-		}, nil
-	}
-	return nil, fmt.Errorf("Unsupported action on the rate: %s", response.Action)
-}
-
-func (s *EtcdBackend) parseConnLimitChange(response *etcd.Response) (interface{}, error) {
-	out := regexp.MustCompile("/hosts/([^/]+)/locations/([^/]+)/limits/connections").FindStringSubmatch(response.Node.Key)
-	if len(out) != 3 {
-		return nil, nil
-	}
-	hostname, locationId := out[1], out[2]
-	connLimitId := suffix(response.Node.Key)
-
-	host, err := s.readHost(hostname, false)
-	if err != nil {
-		return nil, err
-	}
-	location, err := s.readLocation(hostname, locationId)
-	if err != nil {
-		return nil, err
-	}
-	if response.Action == "create" {
-		limit, err := s.readLocationConnLimit(response.Node.Key)
-		if err != nil {
-			return nil, err
-		}
-		return &LocationConnLimitAdded{
-			Host:      host,
-			Location:  location,
-			ConnLimit: limit,
-		}, nil
-	} else if response.Action == "set" {
-		limit, err := s.readLocationConnLimit(response.Node.Key)
-		if err != nil {
-			return nil, err
-		}
-		return &LocationConnLimitUpdated{
-			Host:      host,
-			Location:  location,
-			ConnLimit: limit,
-		}, nil
-	} else if response.Action == "delete" {
-		return &LocationConnLimitDeleted{
-			Host:             host,
-			Location:         location,
-			ConnLimitId:      connLimitId,
-			ConnLimitEtcdKey: response.Node.Key,
+		return &LocationMiddlewareDeleted{
+			Host:                 host,
+			Location:             location,
+			MiddlewareId:         mId,
+			MiddlewareType:       mType,
+			MiddlewareBackendKey: response.Node.Key,
 		}, nil
 	}
 	return nil, fmt.Errorf("Unsupported action on the rate: %s", response.Action)
@@ -668,152 +720,6 @@ func (s *EtcdBackend) readHosts(deep bool) ([]*Host, error) {
 		hosts = append(hosts, host)
 	}
 	return hosts, nil
-}
-
-func (s *EtcdBackend) readHost(hostname string, deep bool) (*Host, error) {
-	hostKey := s.path("hosts", hostname)
-	_, err := s.client.Get(hostKey, false, false)
-	if err != nil {
-		if notFound(err) {
-			return nil, fmt.Errorf("Host '%s' not found", hostname)
-		}
-		return nil, err
-	}
-	host := &Host{
-		Name:      hostname,
-		EtcdKey:   hostKey,
-		Locations: []*Location{},
-	}
-
-	if !deep {
-		return host, nil
-	}
-
-	for _, locationKey := range s.getDirs(hostKey, "locations") {
-		location, err := s.readLocation(hostname, suffix(locationKey))
-		if err != nil {
-			return nil, err
-		}
-		host.Locations = append(host.Locations, location)
-	}
-	return host, nil
-}
-
-func (s *EtcdBackend) readLocation(hostname, locationId string) (*Location, error) {
-	locationKey := s.path("hosts", hostname, "locations", locationId)
-	_, err := s.client.Get(locationKey, false, false)
-	if err != nil {
-		if notFound(err) {
-			return nil, fmt.Errorf("Location '%s' not found for Host '%s'", locationId, hostname)
-		}
-		return nil, err
-	}
-	path, ok := s.getVal(locationKey, "path")
-	if !ok {
-		return nil, fmt.Errorf("Missing location path: %s", locationKey)
-	}
-	upstreamKey, ok := s.getVal(locationKey, "upstream")
-	if !ok {
-		return nil, fmt.Errorf("Missing location upstream: %s", locationKey)
-	}
-	location := &Location{
-		Hostname:   hostname,
-		Id:         suffix(locationKey),
-		EtcdKey:    locationKey,
-		Path:       path,
-		ConnLimits: []*ConnLimit{},
-		RateLimits: []*RateLimit{},
-	}
-	upstream, err := s.readUpstream(upstreamKey)
-	if err != nil {
-		return nil, err
-	}
-	for _, cl := range s.getVals(locationKey, "limits", "connections") {
-		connLimit, err := s.readLocationConnLimit(cl.Key)
-		if err == nil {
-			location.ConnLimits = append(location.ConnLimits, connLimit)
-		}
-	}
-
-	for _, cl := range s.getVals(locationKey, "limits", "rates") {
-		rateLimit, err := s.readLocationRateLimit(cl.Key)
-		if err == nil {
-			location.RateLimits = append(location.RateLimits, rateLimit)
-		}
-	}
-
-	location.Upstream = upstream
-	return location, nil
-}
-
-func (s *EtcdBackend) readUpstreams() ([]*Upstream, error) {
-	upstreams := []*Upstream{}
-	for _, upstreamKey := range s.getDirs(s.etcdKey, "upstreams") {
-		upstream, err := s.readUpstream(suffix(upstreamKey))
-		if err != nil {
-			return nil, err
-		}
-		upstreams = append(upstreams, upstream)
-	}
-	return upstreams, nil
-}
-
-func (s *EtcdBackend) readLocationRateLimit(rateKey string) (*RateLimit, error) {
-	rate, ok := s.getVal(rateKey)
-	if !ok {
-		return nil, fmt.Errorf("Missing rate limit key: %s", rateKey)
-	}
-	rl, err := ParseRateLimit(rate)
-	if err != nil {
-		return nil, err
-	}
-	rl.EtcdKey = rateKey
-	rl.Id = suffix(rl.EtcdKey)
-	return rl, nil
-}
-
-func (s *EtcdBackend) readLocationConnLimit(connKey string) (*ConnLimit, error) {
-	conn, ok := s.getVal(connKey)
-	if !ok {
-		return nil, fmt.Errorf("Missing connection limit key: %s", connKey)
-	}
-	cl, err := ParseConnLimit(conn)
-	if err != nil {
-		return nil, err
-	}
-	cl.EtcdKey = connKey
-	cl.Id = suffix(cl.EtcdKey)
-	return cl, nil
-}
-
-func (s *EtcdBackend) readUpstream(upstreamId string) (*Upstream, error) {
-	upstreamKey := s.path("upstreams", upstreamId)
-
-	_, err := s.client.Get(upstreamKey, false, false)
-	if err != nil {
-		return nil, err
-	}
-	upstream := &Upstream{
-		Id:        suffix(upstreamKey),
-		EtcdKey:   upstreamKey,
-		Endpoints: []*Endpoint{},
-	}
-
-	endpointPairs := s.getVals(join(upstream.EtcdKey, "endpoints"))
-	for _, e := range endpointPairs {
-		_, err := endpoint.ParseUrl(e.Val)
-		if err != nil {
-			fmt.Printf("Ignoring endpoint: failed to parse url: %s", e.Val)
-			continue
-		}
-		e := &Endpoint{
-			Url:     e.Val,
-			EtcdKey: e.Key,
-			Id:      suffix(e.Key),
-		}
-		upstream.Endpoints = append(upstream.Endpoints, e)
-	}
-	return upstream, nil
 }
 
 func (s *EtcdBackend) upstreamUsedBy(upstreamId string) ([]*Location, error) {
@@ -895,6 +801,11 @@ func join(keys ...string) string {
 	return strings.Join(keys, "/")
 }
 
+func notFound(e error) bool {
+	err, ok := e.(*etcd.EtcdError)
+	return ok && err.ErrorCode == 100
+}
+
 func objectError(e error, o IdProvider) error {
 	if e == nil {
 		return nil
@@ -902,10 +813,10 @@ func objectError(e error, o IdProvider) error {
 	switch err := e.(type) {
 	case *etcd.EtcdError:
 		if err.ErrorCode == 100 {
-			return &NotFound{Obj: o}
+			return &NotFoundError{Obj: o}
 		}
 		if err.ErrorCode == 105 {
-			return &AlreadyExists{Obj: o}
+			return &AlreadyExistsError{Obj: o}
 		}
 	}
 	return e
