@@ -119,6 +119,15 @@ func (s *EtcdBackend) AddLocation(l *Location) (*Location, error) {
 	return l, nil
 }
 
+func (s *EtcdBackend) ExpectLocation(hostname, locationId string) error {
+	locationKey := s.path("hosts", hostname, "locations", locationId)
+	_, err := s.client.Get(locationKey, false, false)
+	if err != nil {
+		return objectError(err, &Location{Id: locationId})
+	}
+	return nil
+}
+
 func (s *EtcdBackend) GetLocation(hostname, locationId string) (*Location, error) {
 	locationKey := s.path("hosts", hostname, "locations", locationId)
 	_, err := s.client.Get(locationKey, false, false)
@@ -147,7 +156,7 @@ func (s *EtcdBackend) GetLocation(hostname, locationId string) (*Location, error
 
 	for _, spec := range s.registry.GetSpecs() {
 		for _, cl := range s.getVals(locationKey, "middlewares", spec.Type) {
-			m, err := s.GetLocationMiddleware(hostname, locationId, spec.Type, cl.Key)
+			m, err := s.GetLocationMiddleware(hostname, locationId, spec.Type, suffix(cl.Key))
 			if err != nil {
 				log.Errorf("Failed to read middleware %s(%s), error: %s", spec.Type, cl.Key, err)
 			} else {
@@ -297,8 +306,7 @@ func (s *EtcdBackend) DeleteEndpoint(upstreamId, id string) error {
 }
 
 func (s *EtcdBackend) AddLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error) {
-	// Make sure location actually exists
-	if _, err := s.GetLocation(hostname, locationId); err != nil {
+	if err := s.ExpectLocation(hostname, locationId); err != nil {
 		return nil, err
 	}
 	bytes, err := m.ToJson()
@@ -324,12 +332,10 @@ func (s *EtcdBackend) GetLocationMiddleware(hostname, locationId, mType, id stri
 	if spec == nil {
 		return nil, fmt.Errorf("Middleware type %s is not registered", mType)
 	}
-	// Make sure location exists
-	if _, err := s.GetLocation(hostname, locationId); err != nil {
+	if err := s.ExpectLocation(hostname, locationId); err != nil {
 		return nil, err
 	}
-
-	bytes, ok := s.getVal(s.path("hosts", hostname, "locations", locationId, "middlewares", mType))
+	bytes, ok := s.getVal(s.path("hosts", hostname, "locations", locationId, "middlewares", mType, id))
 	if !ok {
 		return nil, fmt.Errorf("Middleware %s(%s) not found", mType, id)
 	}
@@ -344,8 +350,7 @@ func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, m Mi
 	if len(m.GetId()) == 0 || len(hostname) == 0 || len(locationId) == 0 {
 		return nil, fmt.Errorf("Provide hostname, location and middleware id to update")
 	}
-	// Make sure location actually exists
-	if _, err := s.GetLocation(hostname, locationId); err != nil {
+	if err := s.ExpectLocation(hostname, locationId); err != nil {
 		return nil, err
 	}
 	bytes, err := m.ToJson()
@@ -359,6 +364,9 @@ func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, m Mi
 }
 
 func (s *EtcdBackend) DeleteLocationMiddleware(hostname, locationId, mType, id string) error {
+	if err := s.ExpectLocation(hostname, locationId); err != nil {
+		return err
+	}
 	if _, err := s.client.Delete(s.path("hosts", hostname, "locations", locationId, "middlewares", mType, id), true); err != nil {
 		if notFound(err) {
 			return fmt.Errorf("Middleware %s('%s') not found", mType, id)

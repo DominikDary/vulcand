@@ -73,21 +73,13 @@ type VulcanTree struct {
 }
 
 func (vt *VulcanTree) Self() string {
-	switch r := (vt.root).(type) {
+	switch (vt.root).(type) {
 	case []*Host:
 		return "[hosts]"
 	case []*Upstream:
 		return "[upstreams]"
-	case *Host:
-		return r.String()
-	case *Location:
-		return r.String()
-	case *Upstream:
-		return r.String()
-	case *Endpoint:
-		return r.String()
 	}
-	return "unknown"
+	return formatInstance(vt.root)
 }
 
 func (vt *VulcanTree) Children() []Tree {
@@ -188,6 +180,12 @@ func formatInstance(in interface{}) string {
 	switch r := in.(type) {
 	case *Host:
 		return fmt.Sprintf("host[name=%s]", r.Name)
+	case *Upstream:
+		return fmt.Sprintf("upstream[id=%s]", r.Id)
+	case *Endpoint:
+		return fmt.Sprintf("endpoint[id=%s, url=%s]", r.Id, r.Url)
+	case *Location:
+		return fmt.Sprintf("location[id=%s, path=%s]", r.Id, r.Path)
 	}
 	return "unknown"
 }

@@ -72,7 +72,7 @@ func (c *ProxyController) GetHosts(w http.ResponseWriter, r *http.Request, param
 }
 
 func (c *ProxyController) AddHost(w http.ResponseWriter, r *http.Request, params map[string]string, body []byte) (interface{}, error) {
-	host, err := HostFromJson(body)
+	host, err := HostFromJson(body, c.backend.GetRegistry().FromJson)
 	if err != nil {
 		return nil, formatError(err)
 	}
@@ -147,7 +147,7 @@ func (c *ProxyController) DrainUpstreamConnections(w http.ResponseWriter, r *htt
 }
 
 func (c *ProxyController) AddLocation(w http.ResponseWriter, r *http.Request, params map[string]string, body []byte) (interface{}, error) {
-	location, err := LocationFromJson(body)
+	location, err := LocationFromJson(body, c.backend.GetRegistry().FromJson)
 	if err != nil {
 		return nil, formatError(err)
 	}

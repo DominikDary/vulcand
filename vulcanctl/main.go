@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/codegangsta/cli"
+	log "github.com/mailgun/gotools-log"
 	"github.com/mailgun/vulcand/api"
 	"os"
 	"strings"
@@ -11,6 +12,8 @@ import (
 var vulcanUrl string
 
 func main() {
+	log.Init([]*log.LogConfig{&log.LogConfig{Name: "console"}})
+
 	url, args, err := findVulcanUrl(os.Args)
 	if err != nil {
 		fmt.Println(err)
@@ -27,11 +30,10 @@ func main() {
 		NewStatusCommand(),
 		NewHostCommand(),
 		NewUpstreamCommand(),
-		//		NewLocationCommand(),
-		//		NewEndpointCommand(),
-		//		NewRateLimitCommand(),
-		//		NewConnLimitCommand(),
+		NewLocationCommand(),
+		NewEndpointCommand(),
 	}
+	app.Commands = append(app.Commands, NewMiddlewareCommands()...)
 	app.Run(args)
 }
 

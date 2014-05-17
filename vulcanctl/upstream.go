@@ -44,7 +44,8 @@ func NewUpstreamCommand() cli.Command {
 }
 
 func addUpstreamAction(c *cli.Context) {
-	printStatus(client(c).AddUpstream(c.String("id")))
+	u, err := client(c).AddUpstream(c.String("id"))
+	printResult("%s added", u, err)
 }
 
 func deleteUpstreamAction(c *cli.Context) {

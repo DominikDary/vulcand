@@ -2,7 +2,6 @@
 package backend
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/mailgun/vulcan/netutils"
 	. "github.com/mailgun/vulcand/plugin"
@@ -20,9 +19,9 @@ type Backend interface {
 	UpdateLocationUpstream(hostname, id string, upstream string) (*Location, error)
 	DeleteLocation(hostname, id string) error
 
-	AddLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error)
-	GetLocationMiddleware(hostname, locationId string, mType, id string) (Middleware, error)
-	UpdateLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error)
+	AddLocationMiddleware(hostname, locationId string, m *MiddlewareInstance) (*MiddlewareInstance, error)
+	GetLocationMiddleware(hostname, locationId string, mType, id string) (*MiddlewareInstance, error)
+	UpdateLocationMiddleware(hostname, locationId string, m *MiddlewareInstance) (*MiddlewareInstance, error)
 	DeleteLocationMiddleware(hostname, locationId, mType, id string) error
 
 	GetUpstreams() ([]*Upstream, error)
@@ -50,22 +49,12 @@ type StatsGetter interface {
 	GetStats(hostname string, locationId string, endpointId string) *EndpointStats
 }
 
-// Incoming requests are matched by their hostname first.
-// Hostname is defined by incoming 'Host' header.
+// Incoming requests are matched by their hostname first. Hostname is defined by incoming 'Host' header.
 // E.g. curl http://example.com/alice will be matched by the host example.com first.
 type Host struct {
 	Name       string
 	BackendKey string `json:",omitempty"`
 	Locations  []*Location
-}
-
-func HostFromJson(in []byte) (*Host, error) {
-	var h *Host
-	err := json.Unmarshal(in, &h)
-	if err != nil {
-		return nil, err
-	}
-	return NewHost(h.Name)
 }
 
 func NewHost(name string) (*Host, error) {
@@ -95,16 +84,15 @@ type Location struct {
 	Path        string
 	Id          string
 	Upstream    *Upstream
-	Middlewares []Middleware
+	Middlewares []*MiddlewareInstance
 }
 
-func LocationFromJson(in []byte) (*Location, error) {
-	var l *Location
-	err := json.Unmarshal(in, &l)
-	if err != nil {
-		return nil, err
-	}
-	return NewLocation(l.Hostname, l.Id, l.Path, l.Upstream.Id)
+// Wrapper that contains information about this middleware backend-specific data used for serialization/deserialization
+type MiddlewareInstance struct {
+	Id         string
+	BackendKey string
+	Type       string
+	Middleware Middleware
 }
 
 func NewLocation(hostname, id, path, upstreamId string) (*Location, error) {
@@ -122,14 +110,14 @@ func NewLocation(hostname, id, path, upstreamId string) (*Location, error) {
 		Path:        path,
 		Id:          id,
 		Upstream:    &Upstream{Id: upstreamId, Endpoints: []*Endpoint{}},
-		Middlewares: []Middleware{},
+		Middlewares: []*MiddlewareInstance{},
 	}, nil
 }
 
 func (l *Location) String() string {
 	return fmt.Sprintf(
 		"Location(hostname=%s, id=%s, path=%s, upstream=%s, middlewares=%s)",
-		l.Id, l.Path, l.Upstream, l.Middlewares)
+		l.Hostname, l.Id, l.Path, l.Upstream, l.Middlewares)
 }
 
 func (l *Location) GetId() string {
@@ -157,15 +145,6 @@ func (u *Upstream) String() string {
 
 func (u *Upstream) GetId() string {
 	return u.Id
-}
-
-func UpstreamFromJson(in []byte) (*Upstream, error) {
-	var u *Upstream
-	err := json.Unmarshal(in, &u)
-	if err != nil {
-		return nil, err
-	}
-	return NewUpstream(u.Id)
 }
 
 // Endpoint is a final destination of the request
@@ -197,15 +176,6 @@ func (e *Endpoint) String() string {
 
 func (e *Endpoint) GetId() string {
 	return e.Id
-}
-
-func EndpointFromJson(in []byte) (*Endpoint, error) {
-	var e *Endpoint
-	err := json.Unmarshal(in, &e)
-	if err != nil {
-		return nil, err
-	}
-	return NewEndpoint(e.UpstreamId, e.Id, e.Url)
 }
 
 // Endpoint's realtime stats about endpoint
