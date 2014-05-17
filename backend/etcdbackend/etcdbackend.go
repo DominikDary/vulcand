@@ -160,21 +160,19 @@ func (s *EtcdBackend) GetLocation(hostname, locationId string) (*Location, error
 	return location, nil
 }
 
-func (s *EtcdBackend) UpdateLocationUpstream(hostname, id, upstreamId string) error {
+func (s *EtcdBackend) UpdateLocationUpstream(hostname, id, upstreamId string) (*Location, error) {
 	log.Infof("Update Location(id=%s, hostname=%s) set upstream %s", id, hostname, upstreamId)
 
 	// Make sure upstream exists
 	if _, err := s.GetUpstream(upstreamId); err != nil {
-		return err
+		return nil, err
 	}
 
-	location, err := s.GetLocation(hostname, id)
-	if err != nil {
-		return err
+	if _, err := s.client.Set(join(s.path("hosts", hostname, "locations", id), "upstream"), upstreamId, 0); err != nil {
+		return nil, objectError(err, &Location{Id: id})
 	}
 
-	_, err = s.client.Set(join(location.BackendKey, "upstream"), upstreamId, 0)
-	return err
+	return s.GetLocation(hostname, id)
 }
 
 func (s *EtcdBackend) DeleteLocation(hostname, id string) error {
@@ -342,22 +340,22 @@ func (s *EtcdBackend) GetLocationMiddleware(hostname, locationId, mType, id stri
 	return m, nil
 }
 
-func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, m Middleware) error {
+func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error) {
 	if len(m.GetId()) == 0 || len(hostname) == 0 || len(locationId) == 0 {
-		return fmt.Errorf("Provide hostname, location and middleware id to update")
+		return nil, fmt.Errorf("Provide hostname, location and middleware id to update")
 	}
 	// Make sure location actually exists
 	if _, err := s.GetLocation(hostname, locationId); err != nil {
-		return err
+		return nil, err
 	}
 	bytes, err := m.ToJson()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := s.client.Set(s.path("hosts", hostname, "locations", locationId, "limits", "rates", m.GetId()), string(bytes), 0); err != nil {
-		return objectError(err, m)
+	if _, err := s.client.Set(s.path("hosts", hostname, "locations", locationId, "middlewares", m.GetType(), m.GetId()), string(bytes), 0); err != nil {
+		return m, objectError(err, m)
 	}
-	return nil
+	return m, nil
 }
 
 func (s *EtcdBackend) DeleteLocationMiddleware(hostname, locationId, mType, id string) error {
@@ -828,24 +826,4 @@ func objectError(e error, o IdProvider) error {
 
 func isDir(n *etcd.Node) bool {
 	return n != nil && n.Dir == true
-}
-
-type NotFoundError struct {
-	Obj IdProvider
-}
-
-func (n *NotFoundError) Error() string {
-	return fmt.Sprintf("%T('%s') not found", n.Obj, n.Obj.GetId())
-}
-
-type AlreadyExistsError struct {
-	Obj IdProvider
-}
-
-func (n *AlreadyExistsError) Error() string {
-	return fmt.Sprintf("%T('%s') already exists", n.Obj, n.Obj.GetId())
-}
-
-type IdProvider interface {
-	GetId() string
 }

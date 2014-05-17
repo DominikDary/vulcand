@@ -17,13 +17,13 @@ type Backend interface {
 
 	AddLocation(*Location) (*Location, error)
 	GetLocation(hostname, id string) (*Location, error)
+	UpdateLocationUpstream(hostname, id string, upstream string) (*Location, error)
 	DeleteLocation(hostname, id string) error
-	UpdateLocationUpstream(hostname, id string, upstream string) error
 
 	AddLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error)
 	GetLocationMiddleware(hostname, locationId string, mType, id string) (Middleware, error)
+	UpdateLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error)
 	DeleteLocationMiddleware(hostname, locationId, mType, id string) error
-	UpdateLocationMiddleware(hostname, locationId string, m Middleware) error
 
 	GetUpstreams() ([]*Upstream, error)
 	AddUpstream(*Upstream) (*Upstream, error)
@@ -219,4 +219,24 @@ type EndpointStats struct {
 func (e *EndpointStats) String() string {
 	reqsSec := (e.Failures + e.Successes) / int64(e.PeriodSeconds)
 	return fmt.Sprintf("%d requests/sec, %.2f failures/sec", reqsSec, e.FailRate)
+}
+
+type NotFoundError struct {
+	Obj IdProvider
+}
+
+func (n *NotFoundError) Error() string {
+	return fmt.Sprintf("%T('%s') not found", n.Obj, n.Obj.GetId())
+}
+
+type AlreadyExistsError struct {
+	Obj IdProvider
+}
+
+func (n *AlreadyExistsError) Error() string {
+	return fmt.Sprintf("%T('%s') already exists", n.Obj, n.Obj.GetId())
+}
+
+type IdProvider interface {
+	GetId() string
 }
