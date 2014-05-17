@@ -40,6 +40,9 @@ type Backend interface {
 	// If the initalSetup is true, it should read the existing configuration and generate the events to the channel
 	// just as someone was creating the elements one by one.
 	WatchChanges(changes chan interface{}, initialSetup bool) error
+
+	// Returns registry with the supported plugins
+	GetRegistry() *Registry
 }
 
 // Provides realtime stats about endpoint specific to a particular location.

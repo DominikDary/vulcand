@@ -1,6 +1,7 @@
-package client
+package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	. "github.com/mailgun/vulcand/backend"
@@ -26,9 +27,13 @@ func (c *Client) GetHosts() ([]*Host, error) {
 	return hosts.Hosts, err
 }
 
-func (c *Client) AddHost(name string) (*StatusResponse, error) {
-	response := StatusResponse{}
-	return &response, c.PostForm(c.endpoint("hosts"), url.Values{"name": {name}}, &response)
+func (c *Client) AddHost(name string) (*Host, error) {
+	host, err := NewHost(name)
+	if err != nil {
+		return nil, err
+	}
+	var response *Host
+	return response, c.PostJson(c.endpoint("hosts"), host, &response)
 }
 
 func (c *Client) DeleteHost(name string) (*StatusResponse, error) {
@@ -170,8 +175,17 @@ func (c *Client) PostForm(endpoint string, values url.Values, in interface{}) er
 	}, in)
 }
 
+func (c *Client) PostJson(endpoint string, in interface{}, out interface{}) error {
+	return c.RoundTripJson(func() (*http.Response, error) {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return nil, err
+		}
+		return http.Post(endpoint, "application/json", bytes.NewBuffer(data))
+	}, out)
+}
+
 func (c *Client) Delete(endpoint string, in interface{}) error {
-	fmt.Println(endpoint)
 	return c.RoundTripJson(func() (*http.Response, error) {
 		req, err := http.NewRequest("DELETE", endpoint, nil)
 		if err != nil {
@@ -204,12 +218,18 @@ func (c *Client) RoundTripJson(fn RoundTripFn, in interface{}) error {
 	if err != nil {
 		return err
 	}
+	if response.StatusCode != 200 {
+		var status *StatusResponse
+		if json.Unmarshal(responseBody, &status); err != nil {
+			return fmt.Errorf("Failed to decode response '%s', error: %", responseBody, err)
+		}
+		return status
+	}
+
 	if json.Unmarshal(responseBody, in); err != nil {
 		return fmt.Errorf("Failed to decode response '%s', error: %", responseBody, err)
 	}
-	if response.StatusCode != 200 {
-		return &ErrorResponse{value: in}
-	}
+
 	return nil
 }
 
@@ -233,16 +253,8 @@ type StatusResponse struct {
 	Message string
 }
 
-type ErrorResponse struct {
-	value interface{}
-}
-
-func (e *ErrorResponse) Error() string {
-	switch val := e.value.(type) {
-	case *StatusResponse:
-		return val.Message
-	}
-	return fmt.Sprintf("%s", e.value)
+func (e *StatusResponse) Error() string {
+	return e.Message
 }
 
 type ConnectionsResponse struct {

@@ -41,9 +41,8 @@ func NewEtcdBackend(registry *plugin.Registry, nodes []string, etcdKey, consiste
 	return b, nil
 }
 
-func (s *EtcdBackend) StopWatching() {
-	s.cancelC <- true
-	s.stopC <- true
+func (s *EtcdBackend) GetRegistry() *Registry {
+	return s.registry
 }
 
 func (s *EtcdBackend) GetHosts() ([]*Host, error) {
@@ -343,9 +342,9 @@ func (s *EtcdBackend) GetLocationMiddleware(hostname, locationId, mType, id stri
 	return m, nil
 }
 
-func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, id string, m Middleware) error {
-	if len(id) == 0 || len(hostname) == 0 || len(locationId) == 0 {
-		return fmt.Errorf("Provide hostname, location and rate id to update")
+func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, m Middleware) error {
+	if len(m.GetId()) == 0 || len(hostname) == 0 || len(locationId) == 0 {
+		return fmt.Errorf("Provide hostname, location and middleware id to update")
 	}
 	// Make sure location actually exists
 	if _, err := s.GetLocation(hostname, locationId); err != nil {
@@ -413,8 +412,9 @@ func (s *EtcdBackend) WatchChanges(changes chan interface{}, initialSetup bool) 
 	return nil
 }
 
-func (s EtcdBackend) path(keys ...string) string {
-	return "/" + strings.Join(append([]string{s.etcdKey}, keys...), "/")
+func (s *EtcdBackend) StopWatching() {
+	s.cancelC <- true
+	s.stopC <- true
 }
 
 // Reads the configuration of the vulcand and generates a sequence of events
@@ -738,6 +738,10 @@ func (s *EtcdBackend) upstreamUsedBy(upstreamId string) ([]*Location, error) {
 	return locations, nil
 }
 
+func (s EtcdBackend) path(keys ...string) string {
+	return strings.Join(append([]string{s.etcdKey}, keys...), "/")
+}
+
 func (s *EtcdBackend) getVal(keys ...string) (string, bool) {
 	response, err := s.client.Get(strings.Join(keys, "/"), false, false)
 	if notFound(err) {
@@ -831,7 +835,7 @@ type NotFoundError struct {
 }
 
 func (n *NotFoundError) Error() string {
-	return fmt.Sprintf("%T '%s' not found", n.Obj, n.Obj.GetId())
+	return fmt.Sprintf("%T('%s') not found", n.Obj, n.Obj.GetId())
 }
 
 type AlreadyExistsError struct {
@@ -839,7 +843,7 @@ type AlreadyExistsError struct {
 }
 
 func (n *AlreadyExistsError) Error() string {
-	return fmt.Sprintf("%T '%s' already exists", n.Obj, n.Obj.GetId())
+	return fmt.Sprintf("%T('%s') already exists", n.Obj, n.Obj.GetId())
 }
 
 type IdProvider interface {

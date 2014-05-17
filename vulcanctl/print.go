@@ -78,10 +78,6 @@ func (vt *VulcanTree) Self() string {
 		return "[hosts]"
 	case []*Upstream:
 		return "[upstreams]"
-	case []*RateLimit:
-		return "ratelimits"
-	case []*ConnLimit:
-		return "connlimits"
 	case *Host:
 		return r.String()
 	case *Location:
@@ -89,10 +85,6 @@ func (vt *VulcanTree) Self() string {
 	case *Upstream:
 		return r.String()
 	case *Endpoint:
-		return r.String()
-	case *RateLimit:
-		return r.String()
-	case *ConnLimit:
 		return r.String()
 	}
 	return "unknown"
@@ -104,22 +96,12 @@ func (vt *VulcanTree) Children() []Tree {
 		return hostsToTrees(r)
 	case []*Upstream:
 		return upstreamsToTrees(r)
-	case []*RateLimit:
-		return ratesToTrees(r)
-	case []*ConnLimit:
-		return connLimitsToTrees(r)
 	case *Host:
 		return locationsToTrees(r.Locations)
 	case *Upstream:
 		return endpointsToTrees(r.Endpoints)
 	case *Location:
 		children := []Tree{}
-		if len(r.RateLimits) > 0 {
-			children = append(children, &VulcanTree{root: r.RateLimits})
-		}
-		if len(r.ConnLimits) > 0 {
-			children = append(children, &VulcanTree{root: r.ConnLimits})
-		}
 		return append(children, upstreamsToTrees([]*Upstream{r.Upstream})...)
 	}
 	return nil
@@ -149,22 +131,6 @@ func upstreamsToTrees(in []*Upstream) []Tree {
 	return out
 }
 
-func ratesToTrees(in []*RateLimit) []Tree {
-	out := make([]Tree, len(in))
-	for i, _ := range out {
-		out[i] = &VulcanTree{root: in[i]}
-	}
-	return out
-}
-
-func connLimitsToTrees(in []*ConnLimit) []Tree {
-	out := make([]Tree, len(in))
-	for i, _ := range out {
-		out[i] = &VulcanTree{root: in[i]}
-	}
-	return out
-}
-
 func endpointsToTrees(in []*Endpoint) []Tree {
 	out := make([]Tree, len(in))
 	for i, _ := range out {
@@ -173,11 +139,19 @@ func endpointsToTrees(in []*Endpoint) []Tree {
 	return out
 }
 
-func printStatus(response *StatusResponse, err error) {
+func printResult(format string, in interface{}, err error) {
 	if err != nil {
 		printError(err)
 	} else {
-		printOk(response.Message)
+		printOk(format, formatInstance(in))
+	}
+}
+
+func printStatus(in interface{}, err error) {
+	if err != nil {
+		printError(err)
+	} else {
+		printOk("%s", in)
 	}
 }
 
@@ -208,4 +182,12 @@ func tprint(out string, params ...interface{}) {
 	s = strings.Replace(s, "+-", rCross, -1)
 	s = strings.Replace(s, "|", vLine, -1)
 	fmt.Println(s)
+}
+
+func formatInstance(in interface{}) string {
+	switch r := in.(type) {
+	case *Host:
+		return fmt.Sprintf("host[name=%s]", r.Name)
+	}
+	return "unknown"
 }

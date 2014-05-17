@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/codegangsta/cli"
+	"github.com/mailgun/vulcand/api"
 	"os"
 	"strings"
 )
@@ -24,12 +25,12 @@ func main() {
 
 	app.Commands = []cli.Command{
 		NewStatusCommand(),
-		NewLocationCommand(),
 		NewHostCommand(),
-		NewEndpointCommand(),
 		NewUpstreamCommand(),
-		NewRateLimitCommand(),
-		NewConnLimitCommand(),
+		//		NewLocationCommand(),
+		//		NewEndpointCommand(),
+		//		NewRateLimitCommand(),
+		//		NewConnLimitCommand(),
 	}
 	app.Run(args)
 }
@@ -63,6 +64,6 @@ func flags() []cli.Flag {
 	}
 }
 
-func client(c *cli.Context) *Client {
-	return NewClient(vulcanUrl)
+func client(c *cli.Context) *api.Client {
+	return api.NewClient(vulcanUrl)
 }

@@ -30,7 +30,8 @@ func NewHostCommand() cli.Command {
 }
 
 func addHostAction(c *cli.Context) {
-	printStatus(client(c).AddHost(c.String("name")))
+	host, err := client(c).AddHost(c.String("name"))
+	printResult("%s added", host, err)
 }
 
 func deleteHostAction(c *cli.Context) {

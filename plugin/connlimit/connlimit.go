@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/mailgun/vulcan/limit"
-	"github.com/mailgun/vulcand/middleware"
+	"github.com/mailgun/vulcand/plugin"
 )
 
 const ConnLimitType = "connlimit"
 
-func GetSpec() middleware.Spec {
-	return middleware.Spec{
+func GetSpec() *plugin.MiddlewareSpec {
+	return &plugin.MiddlewareSpec{
 		Type:      ConnLimitType,
 		FromBytes: ParseConnLimit,
 	}

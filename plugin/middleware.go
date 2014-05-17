@@ -38,7 +38,7 @@ type Middleware interface {
 type JsonReader func([]byte) (Middleware, error)
 
 // Handler constructs the middleware from http request
-type RequestReader func(r *http.Request, params map[string]string) (Middleware, error)
+type RequestReader func(id string, r *http.Request) (Middleware, error)
 
 // Reader constructs the middleware from the CLI interface
 type CliReader func(c *cli.Context) (Middleware, error)

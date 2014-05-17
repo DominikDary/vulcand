@@ -4,23 +4,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/codegangsta/cli"
-	api "github.com/mailgun/gotools-api"
 	"github.com/mailgun/vulcan/limit"
 	"github.com/mailgun/vulcan/limit/tokenbucket"
 	"github.com/mailgun/vulcan/middleware"
 	"github.com/mailgun/vulcand/plugin"
-	"net/http"
 	"time"
 )
 
 const Type = "ratelimit"
 
 // Spec is an entry point of a plugin and will be called to register this middleware plugin withing vulcand
-func GetSpec() plugin.MiddlewareSpec {
-	return plugin.MiddlewareSpec{
-		Type:        Type,
-		FromJson:    FromJson,
-		FromRequest: FromRequest,
+func GetSpec() *plugin.MiddlewareSpec {
+	return &plugin.MiddlewareSpec{
+		Type:     Type,
+		FromJson: FromJson,
+		FromCli:  FromCli,
+		CliFlags: CliFlags(),
 	}
 }
 
@@ -43,6 +42,11 @@ func (r *RateLimit) GetType() string {
 // Unique id of the rate limit instance
 func (r *RateLimit) GetId() string {
 	return r.Id
+}
+
+// Can be called by the backend to auto generate the id
+func (r *RateLimit) SetId(id string) {
+	r.Id = id
 }
 
 // Returns serialized representation of the middleware
@@ -94,30 +98,6 @@ func FromJson(in []byte) (plugin.Middleware, error) {
 		return nil, err
 	}
 	return NewRateLimit(rate.Id, rate.Requests, rate.Variable, rate.Burst, rate.PeriodSeconds)
-}
-
-func FromRequest(id string, r *http.Request) (plugin.Middleware, error) {
-	requests, err := api.GetIntField(r, "requests")
-	if err != nil {
-		return nil, err
-	}
-
-	seconds, err := api.GetIntField(r, "seconds")
-	if err != nil {
-		return nil, err
-	}
-
-	burst, err := api.GetIntField(r, "burst")
-	if err != nil {
-		return nil, err
-	}
-
-	variable, err := api.GetStringField(r, "variable")
-	if err != nil {
-		return nil, err
-	}
-
-	return NewRateLimit(id, requests, variable, burst, seconds)
 }
 
 // Constructs the middleware from the command line
