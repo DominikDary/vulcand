@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/codegangsta/cli"
+	. "github.com/mailgun/vulcand/backend"
 	. "github.com/mailgun/vulcand/plugin"
 	"github.com/mailgun/vulcand/plugin/registry"
 )
@@ -50,7 +51,8 @@ func makeAddMiddlewareAction(spec *MiddlewareSpec) func(c *cli.Context) {
 		if err != nil {
 			printError(err)
 		} else {
-			response, err := client(c).AddMiddleware(spec, c.String("host"), c.String("loc"), m)
+			mi := &MiddlewareInstance{Id: c.String("id"), Middleware: m}
+			response, err := client(c).AddMiddleware(spec, c.String("host"), c.String("loc"), mi)
 			printResult("%s added", response, err)
 		}
 	}

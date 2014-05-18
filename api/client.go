@@ -24,9 +24,11 @@ func NewClient(addr string) *Client {
 }
 
 func (c *Client) GetHosts() ([]*Host, error) {
-	var hosts []*Host
-	err := c.GetJson(c.endpoint("hosts"), url.Values{}, hostsReader(&hosts))
-	return hosts, err
+	data, err := c.Get(c.endpoint("hosts"), url.Values{})
+	if err != nil {
+		return nil, err
+	}
+	return HostsFromJson(data, registry.GetRegistry().GetSpec)
 }
 
 func (c *Client) AddHost(name string) (*Host, error) {
@@ -34,13 +36,15 @@ func (c *Client) AddHost(name string) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	var response *Host
-	return response, c.PostJsonInterface(c.endpoint("hosts"), host, hostReader(&host))
+	response, err := c.Post(c.endpoint("hosts"), host)
+	if err != nil {
+		return nil, err
+	}
+	return HostFromJson(response, registry.GetRegistry().GetSpec)
 }
 
 func (c *Client) DeleteHost(name string) (*StatusResponse, error) {
-	response := StatusResponse{}
-	return &response, c.Delete(c.endpoint("hosts", name), &response)
+	return c.Delete(c.endpoint("hosts", name))
 }
 
 func (c *Client) AddLocation(hostname, id, path, upstream string) (*Location, error) {
@@ -48,18 +52,19 @@ func (c *Client) AddLocation(hostname, id, path, upstream string) (*Location, er
 	if err != nil {
 		return nil, err
 	}
-	var response *Location
-	return response, c.PostJson(c.endpoint("hosts", hostname, "locations"), location, locationReader(&response))
+	response, err := c.Post(c.endpoint("hosts", hostname, "locations"), location)
+	if err != nil {
+		return nil, err
+	}
+	return LocationFromJson(response, registry.GetRegistry().GetSpec)
 }
 
 func (c *Client) DeleteLocation(hostname, id string) (*StatusResponse, error) {
-	response := StatusResponse{}
-	return &response, c.Delete(c.endpoint("hosts", hostname, "locations", id), &response)
+	return c.Delete(c.endpoint("hosts", hostname, "locations", id))
 }
 
 func (c *Client) UpdateLocationUpstream(hostname, location, upstream string) (*StatusResponse, error) {
-	response := StatusResponse{}
-	return &response, c.PutForm(c.endpoint("hosts", hostname, "locations", location), url.Values{"upstream": {upstream}}, &response)
+	return c.PutForm(c.endpoint("hosts", hostname, "locations", location), url.Values{"upstream": {upstream}})
 }
 
 func (c *Client) AddUpstream(id string) (*Upstream, error) {
@@ -67,31 +72,47 @@ func (c *Client) AddUpstream(id string) (*Upstream, error) {
 	if err != nil {
 		return nil, err
 	}
-	var response *Upstream
-	return response, c.PostJsonInterface(c.endpoint("upstreams"), upstream, &response)
+	response, err := c.Post(c.endpoint("upstreams"), upstream)
+	if err != nil {
+		return nil, err
+	}
+	return UpstreamFromJson(response)
 }
 
 func (c *Client) DeleteUpstream(id string) (*StatusResponse, error) {
-	response := StatusResponse{}
-	return &response, c.Delete(c.endpoint("upstreams", id), &response)
+	return c.Delete(c.endpoint("upstreams", id))
 }
 
 func (c *Client) GetUpstream(id string) (*Upstream, error) {
-	response := UpstreamResponse{}
-	err := c.Get(c.endpoint("upstreams", id), url.Values{}, &response)
-	return response.Upstream, err
+	response, err := c.Get(c.endpoint("upstreams", id), url.Values{})
+	if err != nil {
+		return nil, err
+	}
+	return UpstreamFromJson(response)
 }
 
 func (c *Client) DrainUpstreamConnections(upstreamId, timeout string) (int, error) {
-	connections := ConnectionsResponse{}
-	err := c.Get(c.endpoint("upstreams", upstreamId, "drain"), url.Values{"timeout": {timeout}}, &connections)
-	return connections.Connections, err
+	data, err := c.Get(c.endpoint("upstreams", upstreamId, "drain"), url.Values{"timeout": {timeout}})
+	if err != nil {
+		return -1, err
+	}
+	var connections *ConnectionsResponse
+	if err := json.Unmarshal(data, &connections); err != nil {
+		return -1, err
+	}
+	return connections.Connections, nil
 }
 
 func (c *Client) GetUpstreams() ([]*Upstream, error) {
-	upstreams := UpstreamsResponse{}
-	err := c.Get(c.endpoint("upstreams"), url.Values{}, &upstreams)
-	return upstreams.Upstreams, err
+	data, err := c.Get(c.endpoint("upstreams"), url.Values{})
+	if err != nil {
+		return nil, err
+	}
+	var upstreams *UpstreamsResponse
+	if err := json.Unmarshal(data, &upstreams); err != nil {
+		return nil, err
+	}
+	return upstreams.Upstreams, nil
 }
 
 func (c *Client) AddEndpoint(upstreamId, id, u string) (*Endpoint, error) {
@@ -99,157 +120,110 @@ func (c *Client) AddEndpoint(upstreamId, id, u string) (*Endpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	var response *Endpoint
-	return response, c.PostJsonInterface(c.endpoint("upstreams", upstreamId, "endpoints"), e, &response)
+	data, err := c.Post(c.endpoint("upstreams", upstreamId, "endpoints"), e)
+	if err != nil {
+		return nil, err
+	}
+	return EndpointFromJson(data)
 }
 
 func (c *Client) DeleteEndpoint(upstreamId, id string) (*StatusResponse, error) {
-	response := StatusResponse{}
-	return &response, c.Delete(c.endpoint("upstreams", upstreamId, "endpoints", id), &response)
+	return c.Delete(c.endpoint("upstreams", upstreamId, "endpoints", id))
 }
 
-func (c *Client) AddMiddleware(spec *MiddlewareSpec, hostname, locationId string, m Middleware) (Middleware, error) {
-	var response Middleware
-	return response, c.PostJson(
-		c.endpoint("hosts", hostname, "locations", locationId, "middlewares", spec.Type),
-		m, middlewareReader(spec, &response))
+func (c *Client) AddMiddleware(spec *MiddlewareSpec, hostname, locationId string, m *MiddlewareInstance) (*MiddlewareInstance, error) {
+	data, err := c.Post(
+		c.endpoint("hosts", hostname, "locations", locationId, "middlewares", spec.Type), m)
+	if err != nil {
+		return nil, err
+	}
+	return MiddlewareFromJson(data, registry.GetRegistry().GetSpec)
 }
 
 func (c *Client) DeleteMiddleware(spec *MiddlewareSpec, hostname, locationId, mId string) (*StatusResponse, error) {
-	response := StatusResponse{}
-	return &response, c.Delete(c.endpoint("hosts", hostname, "locations", locationId, "middlewares", spec.Type, mId), &response)
+	return c.Delete(c.endpoint("hosts", hostname, "locations", locationId, "middlewares", spec.Type, mId))
 }
 
-func (c *Client) PutForm(endpoint string, values url.Values, in interface{}) error {
-	return c.RoundTripJson(func() (*http.Response, error) {
+func (c *Client) PutForm(endpoint string, values url.Values) (*StatusResponse, error) {
+	data, err := c.RoundTrip(func() (*http.Response, error) {
 		req, err := http.NewRequest("PUT", endpoint, strings.NewReader(values.Encode()))
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		return http.DefaultClient.Do(req)
-	}, interfaceReader(in))
+	})
+	if err != nil {
+		return nil, err
+	}
+	var re *StatusResponse
+	err = json.Unmarshal(data, &re)
+	return re, err
 }
 
-func (c *Client) PostForm(endpoint string, values url.Values, in interface{}) error {
-	return c.RoundTripJson(func() (*http.Response, error) {
+func (c *Client) PostForm(endpoint string, values url.Values) ([]byte, error) {
+	return c.RoundTrip(func() (*http.Response, error) {
 		return http.PostForm(endpoint, values)
-	}, interfaceReader(in))
+	})
 }
 
-func (c *Client) PostJsonInterface(endpoint string, in interface{}, out interface{}) error {
-	return c.PostJson(endpoint, in, interfaceReader(out))
-}
-
-func (c *Client) PostJson(endpoint string, in interface{}, reader JsonReaderFn) error {
-	return c.RoundTripJson(func() (*http.Response, error) {
+func (c *Client) Post(endpoint string, in interface{}) ([]byte, error) {
+	return c.RoundTrip(func() (*http.Response, error) {
 		data, err := json.Marshal(in)
 		if err != nil {
 			return nil, err
 		}
 		return http.Post(endpoint, "application/json", bytes.NewBuffer(data))
-	}, reader)
+	})
 }
 
-func (c *Client) Delete(endpoint string, in interface{}) error {
-	return c.RoundTripJson(func() (*http.Response, error) {
+func (c *Client) Delete(endpoint string) (*StatusResponse, error) {
+	data, err := c.RoundTrip(func() (*http.Response, error) {
 		req, err := http.NewRequest("DELETE", endpoint, nil)
 		if err != nil {
 			return nil, err
 		}
 		return http.DefaultClient.Do(req)
-	}, interfaceReader(in))
+	})
+	if err != nil {
+		return nil, err
+	}
+	var re *StatusResponse
+	err = json.Unmarshal(data, &re)
+	return re, err
 }
 
-func (c *Client) Get(u string, params url.Values, in interface{}) error {
-	return c.GetJson(u, params, interfaceReader(in))
-}
-
-func (c *Client) GetJson(u string, params url.Values, reader JsonReaderFn) error {
+func (c *Client) Get(u string, params url.Values) ([]byte, error) {
 	baseUrl, err := url.Parse(u)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	baseUrl.RawQuery = params.Encode()
-	return c.RoundTripJson(func() (*http.Response, error) {
+	return c.RoundTrip(func() (*http.Response, error) {
 		return http.Get(baseUrl.String())
-	}, reader)
+	})
 }
 
 type RoundTripFn func() (*http.Response, error)
-type JsonReaderFn func([]byte) error
 
-func interfaceReader(in interface{}) JsonReaderFn {
-	return func(body []byte) error {
-		if err := json.Unmarshal(body, in); err != nil {
-			return fmt.Errorf("Failed to decode response '%s', error: %", body, err)
-		}
-		return nil
-	}
-}
-
-func middlewareReader(spec *MiddlewareSpec, in *Middleware) JsonReaderFn {
-	return func(body []byte) error {
-		m, err := spec.FromJson(body)
-		if err != nil {
-			return fmt.Errorf("Failed to decode response '%s', error: %", body, err)
-		}
-		*in = m
-		return nil
-	}
-}
-
-func locationReader(in **Location) JsonReaderFn {
-	return func(body []byte) error {
-		l, err := LocationFromJson(body, registry.GetRegistry().GetSpec)
-		if err != nil {
-			return fmt.Errorf("Location reader: failed to decode response '%s', error: %", body, err)
-		}
-		*in = l
-		return nil
-	}
-}
-
-func hostsReader(in *[]*Host) JsonReaderFn {
-	return func(body []byte) error {
-		out, err := HostsFromJson(body, registry.GetRegistry().GetSpec)
-		if err != nil {
-			return fmt.Errorf("Failed to decode response '%s', error: %", body, err)
-		}
-		*in = out
-		return nil
-	}
-}
-
-func hostReader(in **Host) JsonReaderFn {
-	return func(body []byte) error {
-		out, err := HostFromJson(body, registry.GetRegistry().GetSpec)
-		if err != nil {
-			return fmt.Errorf("Failed to decode response '%s', error: %", body, err)
-		}
-		*in = out
-		return nil
-	}
-}
-
-func (c *Client) RoundTripJson(fn RoundTripFn, reader JsonReaderFn) error {
+func (c *Client) RoundTrip(fn RoundTripFn) ([]byte, error) {
 	response, err := fn()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer response.Body.Close()
 	responseBody, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if response.StatusCode != 200 {
 		var status *StatusResponse
 		if json.Unmarshal(responseBody, &status); err != nil {
-			return fmt.Errorf("Failed to decode response '%s', error: %", responseBody, err)
+			return nil, fmt.Errorf("SHMA Failed to decode response '%s', error: %", responseBody, err)
 		}
-		return status
+		return nil, status
 	}
-	return reader(responseBody)
+	return responseBody, nil
 }
 
 func (c *Client) endpoint(params ...string) string {
