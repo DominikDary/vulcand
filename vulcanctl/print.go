@@ -78,6 +78,8 @@ func (vt *VulcanTree) Self() string {
 		return "[hosts]"
 	case []*Upstream:
 		return "[upstreams]"
+	case []*MiddlewareInstance:
+		return "[middlewares]"
 	}
 	return formatInstance(vt.root)
 }
@@ -88,12 +90,17 @@ func (vt *VulcanTree) Children() []Tree {
 		return hostsToTrees(r)
 	case []*Upstream:
 		return upstreamsToTrees(r)
+	case []*MiddlewareInstance:
+		return middlewaresToTrees(r)
 	case *Host:
 		return locationsToTrees(r.Locations)
 	case *Upstream:
 		return endpointsToTrees(r.Endpoints)
 	case *Location:
 		children := []Tree{}
+		if len(r.Middlewares) > 0 {
+			children = append(children, &VulcanTree{root: r.Middlewares})
+		}
 		return append(children, upstreamsToTrees([]*Upstream{r.Upstream})...)
 	}
 	return nil
@@ -124,6 +131,14 @@ func upstreamsToTrees(in []*Upstream) []Tree {
 }
 
 func endpointsToTrees(in []*Endpoint) []Tree {
+	out := make([]Tree, len(in))
+	for i, _ := range out {
+		out[i] = &VulcanTree{root: in[i]}
+	}
+	return out
+}
+
+func middlewaresToTrees(in []*MiddlewareInstance) []Tree {
 	out := make([]Tree, len(in))
 	for i, _ := range out {
 		out[i] = &VulcanTree{root: in[i]}
@@ -186,6 +201,8 @@ func formatInstance(in interface{}) string {
 		return fmt.Sprintf("endpoint[id=%s, url=%s]", r.Id, r.Url)
 	case *Location:
 		return fmt.Sprintf("location[id=%s, path=%s]", r.Id, r.Path)
+	case *MiddlewareInstance:
+		return fmt.Sprintf("%s[id=%s, %s]", r.Type, r.Id, r.Middleware)
 	}
-	return "unknown"
+	return fmt.Sprintf("%s", in)
 }

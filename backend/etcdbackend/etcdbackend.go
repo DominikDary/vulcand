@@ -309,7 +309,7 @@ func (s *EtcdBackend) AddLocationMiddleware(hostname, locationId string, m *Midd
 	if err := s.ExpectLocation(hostname, locationId); err != nil {
 		return nil, err
 	}
-	bytes, err := json.Marshal(m)
+	bytes, err := json.Marshal(m.Middleware)
 	if err != nil {
 		return nil, err
 	}

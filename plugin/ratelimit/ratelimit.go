@@ -63,7 +63,7 @@ func NewRateLimit(requests int, variable string, burst int, periodSeconds int) (
 }
 
 func (rl *RateLimit) String() string {
-	return fmt.Sprintf("RateLimit(key=%s, var=%s, reqs/%s=%d, burst=%d)",
+	return fmt.Sprintf("var=%s, reqs/%s=%d, burst=%d",
 		rl.Variable, time.Duration(rl.PeriodSeconds)*time.Second, rl.Requests, rl.Burst)
 }
 

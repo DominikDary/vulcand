@@ -140,6 +140,15 @@ func (c *Client) AddMiddleware(spec *MiddlewareSpec, hostname, locationId string
 	return MiddlewareFromJson(data, registry.GetRegistry().GetSpec)
 }
 
+func (c *Client) UpdateMiddleware(spec *MiddlewareSpec, hostname, locationId string, m *MiddlewareInstance) (*MiddlewareInstance, error) {
+	data, err := c.Put(
+		c.endpoint("hosts", hostname, "locations", locationId, "middlewares", spec.Type, m.Id), m)
+	if err != nil {
+		return nil, err
+	}
+	return MiddlewareFromJson(data, registry.GetRegistry().GetSpec)
+}
+
 func (c *Client) DeleteMiddleware(spec *MiddlewareSpec, hostname, locationId, mId string) (*StatusResponse, error) {
 	return c.Delete(c.endpoint("hosts", hostname, "locations", locationId, "middlewares", spec.Type, mId))
 }
@@ -174,6 +183,22 @@ func (c *Client) Post(endpoint string, in interface{}) ([]byte, error) {
 			return nil, err
 		}
 		return http.Post(endpoint, "application/json", bytes.NewBuffer(data))
+	})
+}
+
+func (c *Client) Put(endpoint string, in interface{}) ([]byte, error) {
+	return c.RoundTrip(func() (*http.Response, error) {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequest("PUT", endpoint, bytes.NewBuffer(data))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		re, err := http.DefaultClient.Do(req)
+		return re, err
 	})
 }
 
@@ -219,7 +244,7 @@ func (c *Client) RoundTrip(fn RoundTripFn) ([]byte, error) {
 	if response.StatusCode != 200 {
 		var status *StatusResponse
 		if json.Unmarshal(responseBody, &status); err != nil {
-			return nil, fmt.Errorf("SHMA Failed to decode response '%s', error: %", responseBody, err)
+			return nil, fmt.Errorf("Failed to decode response '%s', error: %", responseBody, err)
 		}
 		return nil, status
 	}

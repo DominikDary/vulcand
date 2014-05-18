@@ -22,19 +22,22 @@ type MiddlewareSpec struct {
 func (ms *MiddlewareSpec) FromJson(data []byte) (Middleware, error) {
 	// Get a function's type
 	fnType := reflect.TypeOf(ms.FromOther)
+
 	// Create a pointer to the function's first argument
-	ptr := reflect.PtrTo(fnType.In(0))
+	ptr := reflect.New(fnType.In(0)).Interface()
 	err := json.Unmarshal(data, &ptr)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to decode %T from JSON, error: %s", ptr, err)
 	}
-
 	// Now let's call the function to produce a middleware
 	fnVal := reflect.ValueOf(ms.FromOther)
-	results := fnVal.Call([]reflect.Value{reflect.ValueOf(ptr)})
+	results := fnVal.Call([]reflect.Value{reflect.ValueOf(ptr).Elem()})
 
-	// And return the values
-	return results[0].Interface().(Middleware), results[1].Interface().(error)
+	m, out := results[0].Interface(), results[1].Interface()
+	if out != nil {
+		return nil, out.(error)
+	}
+	return m.(Middleware), nil
 }
 
 type Middleware interface {
