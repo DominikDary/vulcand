@@ -1,7 +1,6 @@
 package ratelimit
 
 import (
-	"encoding/json"
 	"fmt"
 	"github.com/codegangsta/cli"
 	"github.com/mailgun/vulcan/limit"
@@ -16,10 +15,10 @@ const Type = "ratelimit"
 // Spec is an entry point of a plugin and will be called to register this middleware plugin withing vulcand
 func GetSpec() *plugin.MiddlewareSpec {
 	return &plugin.MiddlewareSpec{
-		Type:     Type,
-		FromJson: FromJson,
-		FromCli:  FromCli,
-		CliFlags: CliFlags(),
+		Type:      Type,
+		FromOther: FromOther,
+		FromCli:   FromCli,
+		CliFlags:  CliFlags(),
 	}
 }
 
@@ -32,18 +31,8 @@ type RateLimit struct {
 	Requests      int    // Allowed average requests
 }
 
-// Type of the middleware
-func (r *RateLimit) GetType() string {
-	return Type
-}
-
-// Returns serialized representation of the middleware
-func (r *RateLimit) ToJson() ([]byte, error) {
-	return json.Marshal(r)
-}
-
 // Returns vulcan library compatible middleware
-func (r *RateLimit) NewInstance() (middleware.Middleware, error) {
+func (r *RateLimit) NewMiddleware() (middleware.Middleware, error) {
 	mapper, err := limit.VariableToMapper(r.Variable)
 	if err != nil {
 		return nil, err
@@ -78,12 +67,7 @@ func (rl *RateLimit) String() string {
 		rl.Variable, time.Duration(rl.PeriodSeconds)*time.Second, rl.Requests, rl.Burst)
 }
 
-func FromJson(in []byte) (plugin.Middleware, error) {
-	var rate *RateLimit
-	err := json.Unmarshal(in, &rate)
-	if err != nil {
-		return nil, err
-	}
+func FromOther(rate RateLimit) (plugin.Middleware, error) {
 	return NewRateLimit(rate.Requests, rate.Variable, rate.Burst, rate.PeriodSeconds)
 }
 

@@ -72,7 +72,7 @@ func (c *ProxyController) GetHosts(w http.ResponseWriter, r *http.Request, param
 }
 
 func (c *ProxyController) AddHost(w http.ResponseWriter, r *http.Request, params map[string]string, body []byte) (interface{}, error) {
-	host, err := HostFromJson(body, c.backend.GetRegistry().FromJson)
+	host, err := HostFromJson(body, c.backend.GetRegistry().GetSpec)
 	if err != nil {
 		return nil, formatError(err)
 	}
@@ -147,7 +147,7 @@ func (c *ProxyController) DrainUpstreamConnections(w http.ResponseWriter, r *htt
 }
 
 func (c *ProxyController) AddLocation(w http.ResponseWriter, r *http.Request, params map[string]string, body []byte) (interface{}, error) {
-	location, err := LocationFromJson(body, c.backend.GetRegistry().FromJson)
+	location, err := LocationFromJson(body, c.backend.GetRegistry().GetSpec)
 	if err != nil {
 		return nil, formatError(err)
 	}
@@ -216,7 +216,7 @@ func (c *ProxyController) makeAddMiddleware(spec *plugin.MiddlewareSpec) http.Ha
 	return api.MakeRawHandler(func(w http.ResponseWriter, r *http.Request, params map[string]string, body []byte) (interface{}, error) {
 		hostname := params["hostname"]
 		location := params["location"]
-		m, err := spec.FromJson(body)
+		m, err := MiddlewareFromJson(body, c.backend.GetRegistry().GetSpec)
 		if err != nil {
 			return nil, formatError(err)
 		}
@@ -228,7 +228,7 @@ func (c *ProxyController) makeUpdateMiddleware(spec *plugin.MiddlewareSpec) http
 	return api.MakeRawHandler(func(w http.ResponseWriter, r *http.Request, params map[string]string, body []byte) (interface{}, error) {
 		hostname := params["hostname"]
 		location := params["location"]
-		m, err := spec.FromJson(body)
+		m, err := MiddlewareFromJson(body, c.backend.GetRegistry().GetSpec)
 		if err != nil {
 			return nil, formatError(err)
 		}

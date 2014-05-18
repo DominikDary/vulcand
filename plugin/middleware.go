@@ -1,49 +1,54 @@
 package plugin
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/codegangsta/cli"
 	"github.com/mailgun/vulcan/middleware"
-	"net/http"
+	"reflect"
 )
 
 // Middleware specification, used to construct new middlewares and plug them into CLI API and backends
 type MiddlewareSpec struct {
 	Type string
-	// Reader function that returns a middleware from a serialized format
-	FromJson JsonReader
-	// Handler function that constructs a middleware from HTTP request
-	FromRequest RequestReader
+	// Reader function that returns a middleware from another middleware structure
+	FromOther interface{}
 	// Flags for CLI tool to generate interface
 	CliFlags []cli.Flag
 	// Function that construtcs a middleware from CLI parameters
 	FromCli CliReader
 }
 
-type Middleware interface {
-	// Unique type of the middleware
-	GetType() string
-	// Returns JSON serialized representation of the middleware
-	ToJson() ([]byte, error)
-	// Returns vulcan library compatible middleware
-	NewInstance() (middleware.Middleware, error)
+func (ms *MiddlewareSpec) FromJson(data []byte) (Middleware, error) {
+	// Get a function's type
+	fnType := reflect.TypeOf(ms.FromOther)
+	// Create a pointer to the function's first argument
+	ptr := reflect.PtrTo(fnType.In(0))
+	err := json.Unmarshal(data, &ptr)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to decode %T from JSON, error: %s", ptr, err)
+	}
+
+	// Now let's call the function to produce a middleware
+	fnVal := reflect.ValueOf(ms.FromOther)
+	results := fnVal.Call([]reflect.Value{reflect.ValueOf(ptr)})
+
+	// And return the values
+	return results[0].Interface().(Middleware), results[1].Interface().(error)
 }
 
-// Reader constructs the middleware from it's serialized JSON representation
-// It's up to middleware to choose the serialization format
-type JsonReader func([]byte) (Middleware, error)
-
-// Handler constructs the middleware from http request
-type RequestReader func(id string, r *http.Request) (Middleware, error)
+type Middleware interface {
+	// Returns vulcan library compatible middleware
+	NewMiddleware() (middleware.Middleware, error)
+}
 
 // Reader constructs the middleware from the CLI interface
 type CliReader func(c *cli.Context) (Middleware, error)
 
-// Reads middlewares from the specification given the type
-type MiddlewareReader func(middlewareType string, data []byte) (Middleware, error)
+// Function that returns middleware spec by it's type
+type SpecGetter func(string) *MiddlewareSpec
 
-// Registry contains currently registered middlewares and used to support pluggable middlewares
-// across all modules of the vulcand
+// Registry contains currently registered middlewares and used to support pluggable middlewares across all modules of the vulcand
 type Registry struct {
 	specs []*MiddlewareSpec
 }
@@ -60,6 +65,9 @@ func (r *Registry) AddSpec(s *MiddlewareSpec) error {
 	}
 	if r.GetSpec(s.Type) != nil {
 		return fmt.Errorf("Middleware of type %s already registered")
+	}
+	if err := verifySignature(s.FromOther); err != nil {
+		return err
 	}
 	r.specs = append(r.specs, s)
 	return nil
@@ -78,10 +86,25 @@ func (r *Registry) GetSpecs() []*MiddlewareSpec {
 	return r.specs
 }
 
-func (r *Registry) ReadMiddleware(mType string, data []byte) (Middleware, error) {
-	spec := r.GetSpec(mType)
-	if spec == nil {
-		return nil, fmt.Errorf("Middleware type %s is not supported", mType)
+func verifySignature(fn interface{}) error {
+	t := reflect.TypeOf(fn)
+	if t == nil || t.Kind() != reflect.Func {
+		return fmt.Errorf("Expected function, got %s", t)
 	}
-	return spec.FromJson(data)
+	if t.NumIn() != 1 {
+		return fmt.Errorf("Expected function with one input argument, got %d", t.NumIn())
+	}
+	if t.In(0).Kind() != reflect.Struct {
+		return fmt.Errorf("Function argument should be struct, got %s", t.In(0).Kind())
+	}
+	if t.NumOut() != 2 {
+		return fmt.Errorf("Function should return 2 values, got %s", t.NumOut())
+	}
+	if !t.Out(0).AssignableTo(reflect.TypeOf((*Middleware)(nil)).Elem()) {
+		return fmt.Errorf("Function first return value should be Middleware got, %s", t.Out(0))
+	}
+	if !t.Out(1).AssignableTo(reflect.TypeOf((*error)(nil)).Elem()) {
+		return fmt.Errorf("Function second return value should be error got, %s", t.Out(1))
+	}
+	return nil
 }

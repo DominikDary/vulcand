@@ -3,6 +3,7 @@
 package etcdbackend
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/mailgun/go-etcd/etcd"
 	log "github.com/mailgun/gotools-log"
@@ -51,7 +52,7 @@ func (s *EtcdBackend) GetHosts() ([]*Host, error) {
 
 func (s *EtcdBackend) AddHost(h *Host) (*Host, error) {
 	if _, err := s.client.CreateDir(s.path("hosts", h.Name), 0); err != nil {
-		return nil, objectError(err, h)
+		return nil, convertErr(err)
 	}
 	return h, nil
 }
@@ -64,7 +65,7 @@ func (s *EtcdBackend) readHost(hostname string, deep bool) (*Host, error) {
 	hostKey := s.path("hosts", hostname)
 	_, err := s.client.Get(hostKey, false, false)
 	if err != nil {
-		return nil, objectError(err, &Host{Name: hostname})
+		return nil, convertErr(err)
 	}
 	host := &Host{
 		Name:       hostname,
@@ -88,7 +89,7 @@ func (s *EtcdBackend) readHost(hostname string, deep bool) (*Host, error) {
 
 func (s *EtcdBackend) DeleteHost(name string) error {
 	_, err := s.client.Delete(s.path("hosts", name), true)
-	return objectError(err, &Host{Name: name})
+	return convertErr(err)
 }
 
 func (s *EtcdBackend) AddLocation(l *Location) (*Location, error) {
@@ -100,13 +101,13 @@ func (s *EtcdBackend) AddLocation(l *Location) (*Location, error) {
 	if l.Id == "" {
 		response, err := s.client.AddChildDir(s.path("hosts", l.Hostname, "locations"), 0)
 		if err != nil {
-			return nil, objectError(err, l)
+			return nil, convertErr(err)
 		}
 		l.Id = suffix(response.Node.Key)
 	} else {
 		_, err := s.client.CreateDir(s.path("hosts", l.Hostname, "locations", l.Id), 0)
 		if err != nil {
-			return nil, objectError(err, l)
+			return nil, convertErr(err)
 		}
 	}
 	locationKey := s.path("hosts", l.Hostname, "locations", l.Id)
@@ -123,7 +124,7 @@ func (s *EtcdBackend) ExpectLocation(hostname, locationId string) error {
 	locationKey := s.path("hosts", hostname, "locations", locationId)
 	_, err := s.client.Get(locationKey, false, false)
 	if err != nil {
-		return objectError(err, &Location{Id: locationId})
+		return convertErr(err)
 	}
 	return nil
 }
@@ -132,7 +133,7 @@ func (s *EtcdBackend) GetLocation(hostname, locationId string) (*Location, error
 	locationKey := s.path("hosts", hostname, "locations", locationId)
 	_, err := s.client.Get(locationKey, false, false)
 	if err != nil {
-		return nil, objectError(err, &Location{Id: locationId})
+		return nil, convertErr(err)
 	}
 	path, ok := s.getVal(locationKey, "path")
 	if !ok {
@@ -147,13 +148,12 @@ func (s *EtcdBackend) GetLocation(hostname, locationId string) (*Location, error
 		Id:          locationId,
 		BackendKey:  locationKey,
 		Path:        path,
-		Middlewares: []Middleware{},
+		Middlewares: []*MiddlewareInstance{},
 	}
 	upstream, err := s.GetUpstream(upstreamKey)
 	if err != nil {
 		return nil, err
 	}
-
 	for _, spec := range s.registry.GetSpecs() {
 		for _, cl := range s.getVals(locationKey, "middlewares", spec.Type) {
 			m, err := s.GetLocationMiddleware(hostname, locationId, spec.Type, suffix(cl.Key))
@@ -178,7 +178,7 @@ func (s *EtcdBackend) UpdateLocationUpstream(hostname, id, upstreamId string) (*
 	}
 
 	if _, err := s.client.Set(join(s.path("hosts", hostname, "locations", id), "upstream"), upstreamId, 0); err != nil {
-		return nil, objectError(err, &Location{Id: id})
+		return nil, convertErr(err)
 	}
 
 	return s.GetLocation(hostname, id)
@@ -188,7 +188,7 @@ func (s *EtcdBackend) DeleteLocation(hostname, id string) error {
 	locationKey := s.path("hosts", hostname, "locations", id)
 	_, err := s.client.Delete(locationKey, true)
 	if err != nil {
-		return objectError(err, &Location{Id: id})
+		return convertErr(err)
 	}
 	return nil
 }
@@ -197,13 +197,13 @@ func (s *EtcdBackend) AddUpstream(u *Upstream) (*Upstream, error) {
 	if u.Id == "" {
 		response, err := s.client.AddChildDir(s.path("upstreams"), 0)
 		if err != nil {
-			return nil, objectError(err, u)
+			return nil, convertErr(err)
 		}
 		u.Id = suffix(response.Node.Key)
 	} else {
 		_, err := s.client.CreateDir(s.path("upstreams", u.Id), 0)
 		if err != nil {
-			return nil, objectError(err, u)
+			return nil, convertErr(err)
 		}
 	}
 	return u, nil
@@ -214,7 +214,7 @@ func (s *EtcdBackend) GetUpstream(upstreamId string) (*Upstream, error) {
 
 	_, err := s.client.Get(upstreamKey, false, false)
 	if err != nil {
-		return nil, objectError(err, &Upstream{Id: upstreamId})
+		return nil, convertErr(err)
 	}
 	upstream := &Upstream{
 		Id:         suffix(upstreamKey),
@@ -260,19 +260,19 @@ func (s *EtcdBackend) DeleteUpstream(upstreamId string) error {
 		return fmt.Errorf("Can't delete upstream '%s', it's in use by %s", locations)
 	}
 	_, err = s.client.Delete(s.path("upstreams", upstreamId), true)
-	return objectError(err, &Upstream{Id: upstreamId})
+	return convertErr(err)
 }
 
 func (s *EtcdBackend) AddEndpoint(e *Endpoint) (*Endpoint, error) {
 	if e.Id == "" {
 		response, err := s.client.AddChild(s.path("upstreams", e.UpstreamId, "endpoints"), e.Url, 0)
 		if err != nil {
-			return nil, objectError(err, e)
+			return nil, convertErr(err)
 		}
 		e.Id = suffix(response.Node.Key)
 	} else {
 		if _, err := s.client.Create(s.path("upstreams", e.UpstreamId, "endpoints", e.Id), e.Url, 0); err != nil {
-			return nil, objectError(err, e)
+			return nil, convertErr(err)
 		}
 	}
 	return e, nil
@@ -285,7 +285,7 @@ func (s *EtcdBackend) GetEndpoint(upstreamId, id string) (*Endpoint, error) {
 
 	response, err := s.client.Get(s.path("upstreams", upstreamId, "endpoints", id), false, false)
 	if err != nil {
-		return nil, objectError(err, &Endpoint{Id: id})
+		return nil, convertErr(err)
 	}
 
 	return &Endpoint{
@@ -300,34 +300,34 @@ func (s *EtcdBackend) DeleteEndpoint(upstreamId, id string) error {
 		return err
 	}
 	if _, err := s.client.Delete(s.path("upstreams", upstreamId, "endpoints", id), true); err != nil {
-		return objectError(err, &Endpoint{Id: id})
+		return convertErr(err)
 	}
 	return nil
 }
 
-func (s *EtcdBackend) AddLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error) {
+func (s *EtcdBackend) AddLocationMiddleware(hostname, locationId string, m *MiddlewareInstance) (*MiddlewareInstance, error) {
 	if err := s.ExpectLocation(hostname, locationId); err != nil {
 		return nil, err
 	}
-	bytes, err := m.ToJson()
+	bytes, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
-	if m.GetId() == "" {
-		response, err := s.client.AddChild(s.path("hosts", hostname, "locations", locationId, "middlewares", m.GetType()), string(bytes), 0)
+	if m.Id == "" {
+		response, err := s.client.AddChild(s.path("hosts", hostname, "locations", locationId, "middlewares", m.Type), string(bytes), 0)
 		if err != nil {
 			return nil, err
 		}
-		m.SetId(suffix(response.Node.Key))
+		m.Id = suffix(response.Node.Key)
 	} else {
-		if _, err := s.client.Create(s.path("hosts", hostname, "locations", locationId, "middlewares", m.GetType(), m.GetId()), string(bytes), 0); err != nil {
-			return nil, objectError(err, m)
+		if _, err := s.client.Create(s.path("hosts", hostname, "locations", locationId, "middlewares", m.Type, m.Id), string(bytes), 0); err != nil {
+			return nil, convertErr(err)
 		}
 	}
 	return m, nil
 }
 
-func (s *EtcdBackend) GetLocationMiddleware(hostname, locationId, mType, id string) (Middleware, error) {
+func (s *EtcdBackend) GetLocationMiddleware(hostname, locationId, mType, id string) (*MiddlewareInstance, error) {
 	spec := s.registry.GetSpec(mType)
 	if spec == nil {
 		return nil, fmt.Errorf("Middleware type %s is not registered", mType)
@@ -343,22 +343,26 @@ func (s *EtcdBackend) GetLocationMiddleware(hostname, locationId, mType, id stri
 	if err != nil {
 		return nil, fmt.Errorf("Failed to read Middleware %s(%s)", mType, id, err)
 	}
-	return m, nil
+	return &MiddlewareInstance{Type: mType, Id: id, Middleware: m}, nil
 }
 
-func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, m Middleware) (Middleware, error) {
-	if len(m.GetId()) == 0 || len(hostname) == 0 || len(locationId) == 0 {
+func (s *EtcdBackend) UpdateLocationMiddleware(hostname, locationId string, m *MiddlewareInstance) (*MiddlewareInstance, error) {
+	if len(m.Id) == 0 || len(hostname) == 0 || len(locationId) == 0 {
 		return nil, fmt.Errorf("Provide hostname, location and middleware id to update")
+	}
+	spec := s.registry.GetSpec(m.Type)
+	if spec == nil {
+		return nil, fmt.Errorf("Middleware type %s is not registered", m.Type)
 	}
 	if err := s.ExpectLocation(hostname, locationId); err != nil {
 		return nil, err
 	}
-	bytes, err := m.ToJson()
+	bytes, err := json.Marshal(m.Middleware)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.client.Set(s.path("hosts", hostname, "locations", locationId, "middlewares", m.GetType(), m.GetId()), string(bytes), 0); err != nil {
-		return m, objectError(err, m)
+	if _, err := s.client.Set(s.path("hosts", hostname, "locations", locationId, "middlewares", m.Type, m.Id), string(bytes), 0); err != nil {
+		return m, convertErr(err)
 	}
 	return m, nil
 }
@@ -816,17 +820,17 @@ func notFound(e error) bool {
 	return ok && err.ErrorCode == 100
 }
 
-func objectError(e error, o IdProvider) error {
+func convertErr(e error) error {
 	if e == nil {
 		return nil
 	}
 	switch err := e.(type) {
 	case *etcd.EtcdError:
 		if err.ErrorCode == 100 {
-			return &NotFoundError{Obj: o}
+			return &NotFoundError{}
 		}
 		if err.ErrorCode == 105 {
-			return &AlreadyExistsError{Obj: o}
+			return &AlreadyExistsError{}
 		}
 	}
 	return e

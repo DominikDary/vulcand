@@ -2,6 +2,7 @@ package backend
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/mailgun/vulcand/plugin"
 )
 
@@ -21,7 +22,7 @@ type rawLocation struct {
 	Path        string
 	Id          string
 	Upstream    *Upstream
-	Middlewares []*rawMiddleware
+	Middlewares []json.RawMessage
 }
 
 type rawMiddleware struct {
@@ -31,7 +32,7 @@ type rawMiddleware struct {
 	Middleware json.RawMessage
 }
 
-func HostsFromJson(in []byte, reader plugin.MiddlewareReader) ([]*Host, error) {
+func HostsFromJson(in []byte, getter plugin.SpecGetter) ([]*Host, error) {
 	var hs *rawHosts
 	err := json.Unmarshal(in, &hs)
 	if err != nil {
@@ -40,7 +41,7 @@ func HostsFromJson(in []byte, reader plugin.MiddlewareReader) ([]*Host, error) {
 	out := []*Host{}
 	if hs.Hosts != nil {
 		for _, raw := range hs.Hosts {
-			h, err := HostFromJson(raw, reader)
+			h, err := HostFromJson(raw, getter)
 			if err != nil {
 				return nil, err
 			}
@@ -50,7 +51,7 @@ func HostsFromJson(in []byte, reader plugin.MiddlewareReader) ([]*Host, error) {
 	return out, nil
 }
 
-func HostFromJson(in []byte, reader plugin.MiddlewareReader) (*Host, error) {
+func HostFromJson(in []byte, getter plugin.SpecGetter) (*Host, error) {
 	var h *rawHost
 	err := json.Unmarshal(in, &h)
 	if err != nil {
@@ -62,7 +63,7 @@ func HostFromJson(in []byte, reader plugin.MiddlewareReader) (*Host, error) {
 	}
 	if h.Locations != nil {
 		for _, raw := range h.Locations {
-			l, err := LocationFromJson(raw, reader)
+			l, err := LocationFromJson(raw, getter)
 			if err != nil {
 				return nil, err
 			}
@@ -72,7 +73,7 @@ func HostFromJson(in []byte, reader plugin.MiddlewareReader) (*Host, error) {
 	return out, nil
 }
 
-func LocationFromJson(in []byte, reader plugin.MiddlewareReader) (*Location, error) {
+func LocationFromJson(in []byte, getter plugin.SpecGetter) (*Location, error) {
 	var l *rawLocation
 	err := json.Unmarshal(in, &l)
 	if err != nil {
@@ -83,13 +84,30 @@ func LocationFromJson(in []byte, reader plugin.MiddlewareReader) (*Location, err
 		return nil, err
 	}
 	for _, el := range l.Middlewares {
-		m, err := reader(el.Type, el.Middleware)
+		m, err := MiddlewareFromJson(el, getter)
 		if err != nil {
 			return nil, err
 		}
-		loc.Middlewares = append(loc.Middlewares, &MiddlewareInstance{Id: el.Id, Type: el.Type, BackendKey: el.BackendKey, Middleware: m})
+		loc.Middlewares = append(loc.Middlewares, m)
 	}
 	return loc, nil
+}
+
+func MiddlewareFromJson(in []byte, getter plugin.SpecGetter) (*MiddlewareInstance, error) {
+	var ms *rawMiddleware
+	err := json.Unmarshal(in, &ms)
+	if err != nil {
+		return nil, err
+	}
+	spec := getter(ms.Type)
+	if spec == nil {
+		return nil, fmt.Errorf("Middleware of type %s is not supported", ms.Type)
+	}
+	m, err := spec.FromJson(ms.Middleware)
+	if err != nil {
+		return nil, err
+	}
+	return &MiddlewareInstance{Id: ms.Id, Type: ms.Type, BackendKey: ms.BackendKey, Middleware: m}, nil
 }
 
 func UpstreamFromJson(in []byte) (*Upstream, error) {

@@ -1,9 +1,5 @@
 package backend
 
-import (
-	. "github.com/mailgun/vulcand/plugin"
-)
-
 type HostAdded struct {
 	Host *Host
 }
@@ -38,14 +34,14 @@ type LocationPathUpdated struct {
 type LocationMiddlewareAdded struct {
 	Host                 *Host
 	Location             *Location
-	Middleware           Middleware
+	Middleware           *MiddlewareInstance
 	MiddlewareBackendKey string
 }
 
 type LocationMiddlewareUpdated struct {
 	Host                 *Host
 	Location             *Location
-	Middleware           Middleware
+	Middleware           *MiddlewareInstance
 	MiddlewareBackendKey string
 }
 

@@ -192,21 +192,15 @@ func (e *EndpointStats) String() string {
 }
 
 type NotFoundError struct {
-	Obj IdProvider
 }
 
 func (n *NotFoundError) Error() string {
-	return fmt.Sprintf("%T('%s') not found", n.Obj, n.Obj.GetId())
+	return "Object not found"
 }
 
 type AlreadyExistsError struct {
-	Obj IdProvider
 }
 
 func (n *AlreadyExistsError) Error() string {
-	return fmt.Sprintf("%T('%s') already exists", n.Obj, n.Obj.GetId())
-}
-
-type IdProvider interface {
-	GetId() string
+	return "Object already exists"
 }

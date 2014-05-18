@@ -111,7 +111,7 @@ func (c *Client) DeleteEndpoint(upstreamId, id string) (*StatusResponse, error) 
 func (c *Client) AddMiddleware(spec *MiddlewareSpec, hostname, locationId string, m Middleware) (Middleware, error) {
 	var response Middleware
 	return response, c.PostJson(
-		c.endpoint("hosts", hostname, "locations", locationId, "middlewares", m.GetType()),
+		c.endpoint("hosts", hostname, "locations", locationId, "middlewares", spec.Type),
 		m, middlewareReader(spec, &response))
 }
 
@@ -201,9 +201,9 @@ func middlewareReader(spec *MiddlewareSpec, in *Middleware) JsonReaderFn {
 
 func locationReader(in **Location) JsonReaderFn {
 	return func(body []byte) error {
-		l, err := LocationFromJson(body, registry.GetRegistry().FromJson)
+		l, err := LocationFromJson(body, registry.GetRegistry().GetSpec)
 		if err != nil {
-			return fmt.Errorf("Failed to decode response '%s', error: %", body, err)
+			return fmt.Errorf("Location reader: failed to decode response '%s', error: %", body, err)
 		}
 		*in = l
 		return nil
@@ -212,7 +212,7 @@ func locationReader(in **Location) JsonReaderFn {
 
 func hostsReader(in *[]*Host) JsonReaderFn {
 	return func(body []byte) error {
-		out, err := HostsFromJson(body, registry.GetRegistry().FromJson)
+		out, err := HostsFromJson(body, registry.GetRegistry().GetSpec)
 		if err != nil {
 			return fmt.Errorf("Failed to decode response '%s', error: %", body, err)
 		}
@@ -223,7 +223,7 @@ func hostsReader(in *[]*Host) JsonReaderFn {
 
 func hostReader(in **Host) JsonReaderFn {
 	return func(body []byte) error {
-		out, err := HostFromJson(body, registry.GetRegistry().FromJson)
+		out, err := HostFromJson(body, registry.GetRegistry().GetSpec)
 		if err != nil {
 			return fmt.Errorf("Failed to decode response '%s', error: %", body, err)
 		}

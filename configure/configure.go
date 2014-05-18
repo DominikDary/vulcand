@@ -12,7 +12,6 @@ import (
 	. "github.com/mailgun/vulcand/backend"
 	. "github.com/mailgun/vulcand/connwatch"
 	. "github.com/mailgun/vulcand/endpoint"
-	. "github.com/mailgun/vulcand/plugin"
 )
 
 const ConnWatch = "_vulcanConnWatch"
@@ -154,7 +153,7 @@ func (c *Configurator) deleteLocation(host *Host, locationId string) error {
 	return router.RemoveLocation(location)
 }
 
-func (c *Configurator) upsertLocationMiddleware(host *Host, loc *Location, m Middleware) error {
+func (c *Configurator) upsertLocationMiddleware(host *Host, loc *Location, m *MiddlewareInstance) error {
 	if err := c.upsertLocation(host, loc); err != nil {
 		return err
 	}
@@ -162,11 +161,11 @@ func (c *Configurator) upsertLocationMiddleware(host *Host, loc *Location, m Mid
 	if location == nil {
 		return fmt.Errorf("%s not found", loc)
 	}
-	instance, err := m.NewInstance()
+	instance, err := m.Middleware.NewMiddleware()
 	if err != nil {
 		return err
 	}
-	location.GetMiddlewareChain().Upsert(fmt.Sprintf("%s.%s", m.GetType(), m.GetId()), instance)
+	location.GetMiddlewareChain().Upsert(fmt.Sprintf("%s.%s", m.Type, m.Id), instance)
 	return nil
 }
 
